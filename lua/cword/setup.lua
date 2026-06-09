@@ -13,6 +13,22 @@ local DEFAULTS = {
   },
 }
 
+---Detect the best available backend at runtime. Prefers icu_ffi when
+---libicuuc is loadable (matches JS Intl.Segmenter behavior), falls
+---back to the pure-Lua cjk backend otherwise.
+---@return string
+local function detect_default_backend()
+  local ok = pcall(function()
+    require('ffi').load('icuuc')
+  end)
+  if ok then
+    return 'icu_ffi'
+  end
+  return 'cjk'
+end
+
+M.detect_default_backend = detect_default_backend
+
 local function make_handler(segmenter, method)
   return function()
     local win = vim.api.nvim_get_current_win()
@@ -25,7 +41,11 @@ end
 
 ---@param opts table? { backend = "cjk"|"icu"|"icu_ffi"|"char", keys = { ... } }
 function M.setup(opts)
-  opts = vim.tbl_deep_extend('force', DEFAULTS, opts or {})
+  opts = opts or {}
+  if not opts.backend then
+    opts.backend = detect_default_backend()
+  end
+  opts = vim.tbl_deep_extend('force', DEFAULTS, opts)
   local Segmenter = require('cword.segmenter')
   local segmenter = Segmenter.new({ backend = opts.backend })
   local motion = require('cword.motion')
