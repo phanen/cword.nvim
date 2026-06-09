@@ -27,6 +27,7 @@ end
 --   '你 ，世'      你 1-3   ' ' 4   ， 5-7   世 8-10     (length 10)
 --   '你，世'       你 1-3   ， 4-6   世 7-9               (length 9)
 --   '你好hello世界' 你 1-3   好 4-6   hello 7-11   世 12-14   界 15-17
+--   'pkgs.hello.out' pkgs 1-4  . 5  hello 6-10  . 11  out 12-14
 
 describe('motion algorithm (cjk backend)', function()
   local s = seg('cjk')
@@ -127,6 +128,12 @@ describe('motion algorithm (cjk backend)', function()
       eq(7, motion.forward(s, 'hello world', 1))
       eq(1, motion.backward(s, 'hello world', 7))
       eq(5, motion.end_forward(s, 'hello world', 1))
+    end)
+
+    it('skips non-iskeyword chars (dot, dash) at word boundaries', function()
+      -- pkgs.hello.out: pkgs(1-4) .(5) hello(6-10) .(11) out(12-14)
+      eq(6, motion.forward(s, 'pkgs.hello.out', 1)) -- pkgs -> hello
+      eq(12, motion.forward(s, 'pkgs.hello.out', 6)) -- hello -> out
     end)
   end)
 end)

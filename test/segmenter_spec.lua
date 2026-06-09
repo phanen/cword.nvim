@@ -125,6 +125,23 @@ describe('cjk backend', function()
       eq('true', tostring(t[4].is_word_like)) -- b
       eq('false', tostring(t[5].is_word_like)) -- .
     end)
+
+    it('respects vim.o.iskeyword for word-like classification', function()
+      -- Default iskeyword: @,48-57,_,192-255.
+      -- Dot (0x2E) and dash (0x2D) are NOT iskeyword -> non-word.
+      -- Underscore (0x5F) IS iskeyword -> word-like.
+      local t = seg:cut('a.b-c')
+      eq('a', t[1].text)
+      eq(true, t[1].is_word_like)
+      eq('.', t[2].text)
+      eq(false, t[2].is_word_like)
+      eq('b', t[3].text)
+      eq(true, t[3].is_word_like)
+      eq('-', t[4].text)
+      eq(false, t[4].is_word_like)
+      eq('c', t[5].text)
+      eq(true, t[5].is_word_like)
+    end)
   end)
 end)
 
@@ -193,6 +210,21 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
         parts[#parts + 1] = string.sub(s, tok.byte_start, tok.byte_end)
       end
       eq(s, table.concat(parts))
+    end)
+
+    it('splits on non-iskeyword characters (respects iskeyword)', function()
+      local t = cut_ffi('pkgs.hello.out')
+      eq(5, #t)
+      eq('pkgs', t[1].text)
+      eq(true, t[1].is_word_like)
+      eq('.', t[2].text)
+      eq(false, t[2].is_word_like)
+      eq('hello', t[3].text)
+      eq(true, t[3].is_word_like)
+      eq('.', t[4].text)
+      eq(false, t[4].is_word_like)
+      eq('out', t[5].text)
+      eq(true, t[5].is_word_like)
     end)
   end)
 end)
