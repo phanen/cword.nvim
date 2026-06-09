@@ -1,0 +1,37 @@
+-- char backend: every UTF-8 code point is its own token. No grouping.
+-- Strictest possible segmentation. Whitespace and code points both get
+-- one-token-per-char treatment. Useful for fine-grained control and for
+-- testing the byte-level correctness of the segmentation layer.
+--
+-- Examples:
+--   "hello"     -> [h, e, l, l, o]
+--   "你好"      -> [你, 好]
+--   "hi 你好"   -> [h, i, ' ', 你, 好]
+
+local utf8 = require('cword.util.utf8')
+
+local M = {}
+
+local function is_space(cp)
+  return cp == 0x09 or cp == 0x0A or cp == 0x0B or cp == 0x0C or cp == 0x0D or cp == 0x20
+end
+
+function M.cut(str)
+  local tokens = {}
+  local i = 1
+  local len = #str
+  while i <= len do
+    local clen = utf8.char_len(string.byte(str, i))
+    local cp = utf8.codepoint(str, i)
+    tokens[#tokens + 1] = {
+      text = string.sub(str, i, i + clen - 1),
+      byte_start = i,
+      byte_end = i + clen - 1,
+      is_word_like = not is_space(cp),
+    }
+    i = i + clen
+  end
+  return tokens
+end
+
+return M
