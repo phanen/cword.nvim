@@ -29,13 +29,15 @@ so the segmentation is **predictable, configurable, and dependency-free**.
 | Backend | `你好世界`            | Notes                                                |
 | ------- | -------------------- | ---------------------------------------------------- |
 | `cjk`   | `你`, `好`, `世`, `界` | default, each CJK char is its own word                |
-| `icu`   | `你好世界`            | one CJK run, no dictionary merge                     |
+| `icu`   | `你好世界`            | one CJK run, no dictionary merge (pure Lua re-implementation of UAX #29 run grouping) |
+| `icu_ffi` | `你好`, `世界`      | real ICU via FFI on libicuuc; matches JS `Intl.Segmenter` byte-for-byte (cjdict.txt + Viterbi DP) |
 | `char`  | `你`, `好`, `世`, `界` | one token per UTF-8 code point, ASCII letters split too |
 
 ## Requirements
 
 - Phase 1: any Lua 5.1+ runtime.
-- Phase 2 (planned): Neovim >= 0.9.
+- Phase 2: Neovim >= 0.9.
+- `icu_ffi` backend: libicuuc shared library (FFI). On Arch install `icu`; the binding is hard-wired to the `_78` symbol suffix.
 
 ## Installation
 
