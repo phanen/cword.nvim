@@ -120,6 +120,52 @@ M.move_backward = cursor_move(M.motion.backward, 'backward')
 M.move_end_forward = cursor_move(M.motion.end_forward, 'end_forward')
 M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
 
+-- Insert-mode word motions (readline-style).
+
+local function insert_move(method, direction)
+  local is_fwd = direction == 'forward' or direction == 'end_forward'
+  return function()
+    if not _seg then
+      M.setup()
+    end
+    local win = vim.api.nvim_get_current_win()
+    local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
+    local cursor = col0 + 1
+    local line = vim.api.nvim_get_current_line()
+    -- In insert mode, cursor is between chars (col0). Move to
+    -- col0+1 for forward, col0 for backward (exclusive).
+    local target
+    if is_fwd then
+      target = method(_seg, line, cursor)
+    else
+      -- backward: use cursor as-is (exclusive bound)
+      target = method(_seg, line, cursor)
+    end
+    vim.api.nvim_win_set_cursor(win, { row, math.max(0, target - 1) })
+  end
+end
+
+M.insert_forward = insert_move(M.motion.forward, 'forward')
+M.insert_backward = insert_move(M.motion.backward, 'backward')
+M.insert_end_forward = insert_move(M.motion.end_forward, 'end_forward')
+M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
+
+-- Insert-mode delete word backward (<c-w>).
+
+M.insert_delete_word = function()
+  if not _seg then
+    M.setup()
+  end
+  local win = vim.api.nvim_get_current_win()
+  local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
+  local cursor = col0 + 1
+  local line = vim.api.nvim_get_current_line()
+  local target = M.motion.backward(_seg, line, cursor)
+  if target < cursor then
+    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0 + 1, { '' })
+  end
+end
+
 -- Exposed for spec probing.
 M._default_backend = default_backend
 
