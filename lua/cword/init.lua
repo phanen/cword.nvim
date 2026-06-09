@@ -162,7 +162,7 @@ M.insert_delete_word = function()
   local line = vim.api.nvim_get_current_line()
   local target = M.motion.backward(_seg, line, cursor)
   if target < cursor then
-    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0 + 1, { '' })
+    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
   end
 end
 

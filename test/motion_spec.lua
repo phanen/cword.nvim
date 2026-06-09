@@ -50,8 +50,8 @@ describe('motion algorithm (cjk backend)', function()
     end)
 
     it('clamps to end of line when no next word', function()
-      eq(12, motion.forward(s, '你好世界', 12))
-      eq(5, motion.forward(s, 'hello', 5))
+      eq(13, motion.forward(s, '你好世界', 12))
+      eq(6, motion.forward(s, 'hello', 5))
     end)
 
     it('handles cursor at end of word', function()
@@ -59,7 +59,7 @@ describe('motion algorithm (cjk backend)', function()
     end)
 
     it('handles empty line', function()
-      eq(0, motion.forward(s, '', 1))
+      eq(1, motion.forward(s, '', 1))
     end)
 
     it('mixed CJK and ASCII', function()

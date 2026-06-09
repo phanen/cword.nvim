@@ -81,7 +81,7 @@ describe('insert mode', function()
   it('<c-w> deletes word backward', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
     helpers.api.nvim_win_set_cursor(0, { 1, 10 })
-    helpers.feed('i')
+    helpers.feed('a') -- append after cursor (cursor after 'd')
     helpers.feed('<c-w>')
     screen:expect({
       grid = [[
