@@ -199,4 +199,46 @@ describe('motion e2e (cjk backend)', function()
 ]],
     })
   end)
+
+  it('w wraps past the end of a line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'next line here' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('w')
+    screen:expect({
+      grid = [[
+  hello ^world                             |
+  next line here                          |
+  ~                                       |
+                                          |
+]],
+    })
+  end)
+
+  it('w stops at the start of an empty line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', '', 'next' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('w')
+    screen:expect({
+      grid = [[
+  hello                                   |
+  ^                                        |
+  next                                    |
+                                          |
+]],
+    })
+  end)
+
+  it('b wraps into the previous line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'foo bar' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 })
+    helpers.feed('b')
+    screen:expect({
+      grid = [[
+  hello worl^d                             |
+  foo bar                                 |
+  ~                                       |
+                                          |
+]],
+    })
+  end)
 end)
