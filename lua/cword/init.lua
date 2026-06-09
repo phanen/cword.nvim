@@ -18,6 +18,12 @@ M.motion = require('cword.motion')
 -- any move_* handler.
 local _seg ---@type table
 
+---@param tok table
+---@return boolean
+local function is_whitespace(tok)
+  return tok.text:match('^%s+$') ~= nil
+end
+
 ---@return string
 local function default_backend()
   local ok = pcall(function()
@@ -64,9 +70,10 @@ local function cursor_move(method, direction)
             break
           end
           for _, t in ipairs(_seg:cut(s)) do
-            if t.is_word_like then
+            if not is_whitespace(t) then
               r, c = nr, t.byte_start
               found = true
+              break
             end
           end
           if found then
@@ -90,7 +97,7 @@ local function cursor_move(method, direction)
             break
           end
           for _, t in ipairs(_seg:cut(s)) do
-            if t.is_word_like then
+            if not is_whitespace(t) then
               r, c = nr, t.byte_end
               found = true
             end
