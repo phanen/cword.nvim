@@ -1,6 +1,6 @@
--- Default backend. Each CJK code point is its own word; ASCII letters,
--- digits, and underscore group together (vim's default iskeyword);
--- whitespace and punctuation are their own non-word tokens.
+-- Default backend. Each CJK code point is its own word;
+-- word-ness for everything else is determined by vim.o.iskeyword.
+-- Whitespace and punctuation are their own non-word tokens.
 --
 -- Ranges used by `kind`:
 --   space  : 0x09..0x0D, 0x20
@@ -8,10 +8,11 @@
 --            Hiragana (3040-309F), Katakana (30A0-30FF),
 --            Hangul Syllables (AC00-D7A3)
 --   punct  : CJK Symbols (3000-303F), Halfwidth/Fullwidth (FF00-FFEF),
---            ASCII punctuation
---   ascii  : ASCII letters, digits, underscore
+--            everything not matched by iskeyword
+--   ascii  : iskeyword hit (typically @,48-57,_,192-255)
 
 local utf8 = require('cword.util.utf8')
+local iskeyword = require('cword.util.iskeyword')
 
 local M = {}
 
@@ -31,12 +32,10 @@ local function kind(cp)
   if cp >= 0x3000 and cp <= 0x303F then
     return 'punct'
   end
-  if
-    (cp >= 0x41 and cp <= 0x5A)
-    or (cp >= 0x61 and cp <= 0x7A)
-    or (cp >= 0x30 and cp <= 0x39)
-    or cp == 0x5F
-  then
+  if cp >= 0xFF00 and cp <= 0xFFEF then
+    return 'punct'
+  end
+  if iskeyword.is_keyword(cp) then
     return 'ascii'
   end
   return 'punct'

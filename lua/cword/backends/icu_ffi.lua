@@ -91,52 +91,63 @@ end
 -- Helpers
 -- ---------------------------------------------------------------------------
 
-local function first_codepoint(s, byte_idx)
-  if byte_idx > #s then
-    return -1
-  end
+local iskeyword = require('cword.util.iskeyword')
+
+local function is_word_like_at(s, byte_idx)
   local b1 = string.byte(s, byte_idx)
   if not b1 then
-    return -1
+    return false
   end
-  if b1 < 0x80 then
-    return b1
-  end
-  if b1 < 0xE0 then
+
+  -- CJK symbols & punctuation: never word-like (U+3000..U+303F).
+  if b1 == 0xE3 then
     local b2 = string.byte(s, byte_idx + 1) or 0
-    return ((b1 - 0xC0) * 0x40) + (b2 - 0x80)
+    if b2 == 0x80 then
+      local b3 = string.byte(s, byte_idx + 2) or 0
+      if b3 >= 0x80 and b3 <= 0xBF then
+        return false
+      end
+    end
   end
-  if b1 < 0xF0 then
+
+  -- Fullwidth forms: never word-like (U+FF00..U+FFEF).
+  if b1 == 0xEF then
+    local b2 = string.byte(s, byte_idx + 1) or 0
+    if (b2 >= 0xBC and b2 <= 0xBF) or b2 == 0xBD then
+      return false
+    end
+  end
+
+  -- Decode codepoint for the CJK and iskeyword checks.
+  local cp
+  if b1 < 0x80 then
+    cp = b1
+  elseif b1 < 0xE0 then
+    local b2 = string.byte(s, byte_idx + 1) or 0
+    cp = ((b1 - 0xC0) * 0x40) + (b2 - 0x80)
+  elseif b1 < 0xF0 then
     local b2 = string.byte(s, byte_idx + 1) or 0
     local b3 = string.byte(s, byte_idx + 2) or 0
-    return ((b1 - 0xE0) * 0x1000) + ((b2 - 0x80) * 0x40) + (b3 - 0x80)
+    cp = ((b1 - 0xE0) * 0x1000) + ((b2 - 0x80) * 0x40) + (b3 - 0x80)
+  else
+    local b2 = string.byte(s, byte_idx + 1) or 0
+    local b3 = string.byte(s, byte_idx + 2) or 0
+    local b4 = string.byte(s, byte_idx + 3) or 0
+    cp = ((b1 - 0xF0) * 0x40000) + ((b2 - 0x80) * 0x1000) + ((b3 - 0x80) * 0x40) + (b4 - 0x80)
   end
-  local b2 = string.byte(s, byte_idx + 1) or 0
-  local b3 = string.byte(s, byte_idx + 2) or 0
-  local b4 = string.byte(s, byte_idx + 3) or 0
-  return ((b1 - 0xF0) * 0x40000) + ((b2 - 0x80) * 0x1000) + ((b3 - 0x80) * 0x40) + (b4 - 0x80)
-end
 
--- Mirrors JS Intl.SegmentData.isWordLike: a token is word-like when
--- its first code point is ASCII letter/digit/underscore or a
--- non-ASCII non-punctuation code point.
-local function is_word_like_char(cp)
-  if cp < 0 then
-    return false
+  -- CJK ideographs, hiragana/katakana, hangul: always word-like.
+  if
+    (cp >= 0x4E00 and cp <= 0x9FFF)
+    or (cp >= 0x3400 and cp <= 0x4DBF)
+    or (cp >= 0x3040 and cp <= 0x309F)
+    or (cp >= 0x30A0 and cp <= 0x30FF)
+    or (cp >= 0xAC00 and cp <= 0xD7A3)
+  then
+    return true
   end
-  if cp < 0x80 then
-    return (cp >= 0x41 and cp <= 0x5A) -- A-Z
-      or (cp >= 0x61 and cp <= 0x7A) -- a-z
-      or (cp >= 0x30 and cp <= 0x39) -- 0-9
-      or cp == 0x5F -- _
-  end
-  if cp >= 0x3000 and cp <= 0x303F then
-    return false
-  end -- CJK Symbols
-  if cp >= 0xFF00 and cp <= 0xFFEF then
-    return false
-  end -- fullwidth
-  return true
+
+  return iskeyword.is_keyword(cp)
 end
 
 local function to_utf16(s)
@@ -193,12 +204,11 @@ function M.cut(str)
     local byte_start = utf16_to_byte(str, u_start) + 1
     local byte_end = utf16_to_byte(str, u_end)
     if byte_end >= byte_start then
-      local cp = first_codepoint(str, byte_start)
       tokens[#tokens + 1] = {
         text = string.sub(str, byte_start, byte_end),
         byte_start = byte_start,
         byte_end = byte_end,
-        is_word_like = is_word_like_char(cp),
+        is_word_like = is_word_like_at(str, byte_start),
       }
     end
   end
