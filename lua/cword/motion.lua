@@ -52,7 +52,7 @@ function M.backward(segmenter, line, cursor)
       if not is_whitespace(t) then
         prev = t
       end
-      if t.is_word_like and cursor <= t.byte_end then
+      if cursor <= t.byte_end then
         inside = t
       end
     end
@@ -70,7 +70,7 @@ end
 function M.end_forward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
   for _, t in ipairs(segmenter:cut(line)) do
-    if t.is_word_like and t.byte_end > cursor then
+    if t.byte_end > cursor then
       return t.byte_end
     end
   end
@@ -83,11 +83,17 @@ end
 ---@return integer column of previous word end, or 1
 function M.end_backward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
-  local prev
+  local inside, prev
   for _, t in ipairs(segmenter:cut(line)) do
-    if t.is_word_like and t.byte_end < cursor then
+    if t.byte_end < cursor then
       prev = t
+      if cursor <= t.byte_end then
+        inside = t
+      end
     end
+  end
+  if inside then
+    return inside.byte_end
   end
   return (prev or { byte_end = 1 }).byte_end
 end

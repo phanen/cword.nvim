@@ -56,7 +56,9 @@ function M.cut(str)
     local clen = utf8.char_len(string.byte(str, i))
     local start = i
 
-    if k == 'space' or k == 'ascii' then
+    if k == 'space' or k == 'ascii' or k == 'punct' then
+      -- Group consecutive runs of the same kind. CJK is not
+      -- grouped (keep per-char for word motion).
       i = i + clen
       while i <= len do
         if kind(utf8.codepoint(str, i)) ~= k then
