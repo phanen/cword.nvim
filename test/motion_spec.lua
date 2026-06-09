@@ -136,17 +136,28 @@ describe('motion algorithm (icu_ffi backend)', function()
   if not ok_ffi then
     return
   end
-  local s = seg('icu_ffi')
+
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
+
+  local function fwd(str, cursor)
+    return helpers.exec_lua(function(s, c)
+      local Segmenter = require('cword.segmenter')
+      local motion = require('cword.motion')
+      local seg = Segmenter.new({ backend = 'icu_ffi' })
+      return motion.forward(seg, s, c)
+    end, str, cursor)
+  end
 
   it('dictionary merges break into multiple runs', function()
-    -- icu_ffi segments 你好世界 as [你好, 世界], so forward from 1
-    -- jumps to byte 7 (start of 世界), not 12 (end of line).
-    eq(7, motion.forward(s, '你好世界', 1))
-    eq(7, motion.forward(s, '你好世界', 6))
+    eq(7, fwd('你好世界', 1))
+    eq(7, fwd('你好世界', 6))
   end)
 
   it('still jumps across runs via whitespace', function()
-    eq(8, motion.forward(s, '你好 world', 1))
+    eq(8, fwd('你好 world', 1))
   end)
 end)
 

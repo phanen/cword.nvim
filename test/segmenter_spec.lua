@@ -135,8 +135,6 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
     return
   end
 
-  local seg = Segmenter.new({ backend = 'icu_ffi' })
-
   it('auto-detects the loaded ICU major version', function()
     eq('number', type(icu_ffi._icu_version))
     assert(
@@ -145,45 +143,57 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
     )
   end)
 
-  it('matches JS Intl.Segmenter for cjdict merges', function()
-    -- [你好, 世界] is the canonical example: both entries are in cjdict.txt.
-    eq('你好|世界', text_of(seg:cut('你好世界')))
-  end)
+  describe('segmentation (executed in target nvim via exec_lua)', function()
+    before_each(function()
+      helpers.clear()
+      helpers.setup_path()
+    end)
 
-  it('uses Viterbi DP for ambiguous Chinese strings', function()
-    -- ICU picks 南京市 over 南京/市长 because 南京市 is in the dictionary.
-    eq('南京市|长江|大|桥', text_of(seg:cut('南京市长江大桥')))
-  end)
-
-  it('handles script change across whitespace', function()
-    eq('你好| |hello', text_of(seg:cut('你好 hello')))
-  end)
-
-  it('breaks CJK punctuation as a non-word token', function()
-    eq('你好|，|世界', text_of(seg:cut('你好，世界')))
-  end)
-
-  it('handles empty input', function()
-    eq('', text_of(seg:cut('')))
-  end)
-
-  it('reports byte offsets in UTF-8 (not UTF-16 code units)', function()
-    -- 你好世界: ICU returns UTF-16 positions 0, 2, 4. The UTF-8 byte
-    -- offsets for those code units are 0, 6, 12 (each CJK = 3 bytes).
-    local t = seg:cut('你好世界')
-    eq(1, t[1].byte_start)
-    eq(6, t[1].byte_end)
-    eq(7, t[2].byte_start)
-    eq(12, t[2].byte_end)
-  end)
-
-  it('roundtrips via string.sub using the reported byte offsets', function()
-    local s = '南京市长江大桥'
-    local parts = {}
-    for _, tok in ipairs(seg:cut(s)) do
-      parts[#parts + 1] = string.sub(s, tok.byte_start, tok.byte_end)
+    local function cut_ffi(str)
+      return helpers.exec_lua(function(s)
+        local Segmenter = require('cword.segmenter')
+        local seg = Segmenter.new({ backend = 'icu_ffi' })
+        return seg:cut(s)
+      end, str)
     end
-    eq(s, table.concat(parts))
+
+    it('matches JS Intl.Segmenter for cjdict merges', function()
+      eq('你好|世界', text_of(cut_ffi('你好世界')))
+    end)
+
+    it('uses Viterbi DP for ambiguous Chinese strings', function()
+      eq('南京市|长江|大|桥', text_of(cut_ffi('南京市长江大桥')))
+    end)
+
+    it('handles script change across whitespace', function()
+      eq('你好| |hello', text_of(cut_ffi('你好 hello')))
+    end)
+
+    it('breaks CJK punctuation as a non-word token', function()
+      eq('你好|，|世界', text_of(cut_ffi('你好，世界')))
+    end)
+
+    it('handles empty input', function()
+      eq('', text_of(cut_ffi('')))
+    end)
+
+    it('reports byte offsets in UTF-8 (not UTF-16 code units)', function()
+      local t = cut_ffi('你好世界')
+      eq(1, t[1].byte_start)
+      eq(6, t[1].byte_end)
+      eq(7, t[2].byte_start)
+      eq(12, t[2].byte_end)
+    end)
+
+    it('roundtrips via string.sub using the reported byte offsets', function()
+      local s = '南京市长江大桥'
+      local parts = {}
+      local t = cut_ffi(s)
+      for _, tok in ipairs(t) do
+        parts[#parts + 1] = string.sub(s, tok.byte_start, tok.byte_end)
+      end
+      eq(s, table.concat(parts))
+    end)
   end)
 end)
 

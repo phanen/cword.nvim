@@ -83,38 +83,8 @@ M._icu_version = ICU_VER
 -- UTF-16 -> UTF-8 byte conversion
 -- ---------------------------------------------------------------------------
 
--- `vim.str_byteindex` exists in real Neovim and in nvim-test's target
--- session; the nvim-test runner harness strips it. The fallback
--- walker is small enough that using it under the harness is fine.
-local HAS_VIM_BYTEINDEX = type(vim) == 'table' and type(vim.str_byteindex) == 'function'
-
 local function utf16_to_byte(str, target_u16)
-  if HAS_VIM_BYTEINDEX then
-    return vim.str_byteindex(str, 'utf-16', target_u16, false)
-  end
-
-  -- Pure-Lua fallback. BMP codepoints consume 1 UTF-16 unit;
-  -- supplementary plane codepoints consume 2.
-  local i = 1
-  local u = 0
-  local len = #str
-  while i <= len and u < target_u16 do
-    local b1 = string.byte(str, i)
-    if b1 < 0x80 then
-      u = u + 1
-      i = i + 1
-    elseif b1 < 0xE0 then
-      u = u + 1
-      i = i + 2
-    elseif b1 < 0xF0 then
-      u = u + 1
-      i = i + 3
-    else
-      u = u + 2
-      i = i + 4
-    end
-  end
-  return i - 1
+  return vim.str_byteindex(str, 'utf-16', target_u16, false)
 end
 
 -- ---------------------------------------------------------------------------
