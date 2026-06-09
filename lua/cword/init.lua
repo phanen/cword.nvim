@@ -166,6 +166,45 @@ M.insert_delete_word = function()
   end
 end
 
+-- Command-line mode word motions.
+
+M.cmdline_forward = function()
+  if not _seg then
+    M.setup()
+  end
+  local line = vim.fn.getcmdline()
+  local pos = vim.fn.getcmdpos()
+  local target = M.motion.forward(_seg, line, pos)
+  if target > pos then
+    vim.fn.setcmdpos(target)
+  end
+end
+
+M.cmdline_backward = function()
+  if not _seg then
+    M.setup()
+  end
+  local line = vim.fn.getcmdline()
+  local pos = vim.fn.getcmdpos()
+  local target = M.motion.backward(_seg, line, pos)
+  if target < pos then
+    vim.fn.setcmdpos(target)
+  end
+end
+
+M.cmdline_delete_word = function()
+  if not _seg then
+    M.setup()
+  end
+  local line = vim.fn.getcmdline()
+  local pos = vim.fn.getcmdpos()
+  local target = M.motion.backward(_seg, line, pos)
+  if target < pos then
+    vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos))
+    vim.fn.setcmdpos(target)
+  end
+end
+
 -- Exposed for spec probing.
 M._default_backend = default_backend
 

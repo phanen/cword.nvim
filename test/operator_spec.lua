@@ -112,3 +112,25 @@ describe('insert mode', function()
     })
   end)
 end)
+
+describe('command-line mode', function()
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
+
+  it('exposes cmdline_forward/backward/delete_word handlers', function()
+    local cword = helpers.exec_lua(function()
+      local m = require('cword')
+      m.setup()
+      return {
+        cf = type(m.cmdline_forward),
+        cb = type(m.cmdline_backward),
+        cd = type(m.cmdline_delete_word),
+      }
+    end)
+    eq('function', cword.cf)
+    eq('function', cword.cb)
+    eq('function', cword.cd)
+  end)
+end)
