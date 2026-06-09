@@ -8,13 +8,12 @@ motions that use it.
 
 ## Status
 
-| Phase | What                                              | Status      |
-| ----- | ------------------------------------------------- | ----------- |
-| 1     | Segmentation API with 3 backends (`cjk`, `icu`, `char`) | shipped     |
-| 2     | Word motion plugin on top of the segmenter        | not started |
+| Phase | What                                                   | Status  |
+| ----- | ------------------------------------------------------ | ------- |
+| 1     | Segmentation API with 3 backends (`cjk`, `icu`, `char`) | shipped |
+| 2     | Word motion (`w`/`b`/`e`/`ge`) on top of the segmenter | shipped |
 
-Phase 1 has no external runtime dependencies and no Neovim requirement.
-Phase 2 will need Neovim >= 0.9.
+Phase 1 has no external runtime dependencies. Phase 2 needs Neovim >= 0.9.
 
 ## Why
 
@@ -72,6 +71,21 @@ end
 --       16 16 false
 -- hello 17 21 true
 ```
+
+### Word motion (Phase 2)
+
+```lua
+local cword = require('cword')
+local seg   = cword.Segmenter.new({ backend = 'cjk' })
+local motion = cword.Motion.new({ segmenter = seg })
+motion:set_keymaps() -- binds w/b/e/ge in normal mode
+```
+
+After `set_keymaps()`:
+- `w` jumps one CJK char (or one ASCII word)
+- `b` jumps to previous word start
+- `e` jumps to end of current/next word
+- `ge` jumps to end of previous word
 
 ## API
 
