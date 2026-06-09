@@ -1,27 +1,10 @@
--- Segmenter: turn a string into a list of tokens.
+-- Turn a string into a list of tokens.
 --
 -- Token shape:
---   {
---     text        = string,   -- the token's text (UTF-8 byte sequence)
---     byte_start  = integer,  -- 1-indexed, inclusive (matches string.sub)
---     byte_end    = integer,  -- 1-indexed, inclusive
---     is_word_like = boolean, -- true if this token is a "word" (CJK char,
---                              -- ASCII identifier, etc.); false if it is
---                              -- whitespace or punctuation
---   }
+--   { text, byte_start, byte_end, is_word_like }
 --
--- The byte offsets are inclusive on both ends so that `string.sub(s,
--- byte_start, byte_end)` recovers the token's text exactly. This matches
--- Lua's native string indexing and avoids off-by-one traps.
---
--- Backends:
---   "cjk"  : default, each CJK char is its own word (predictable, no deps)
---   "icu"  : CJK runs grouped like ICU (no dictionary lookups)
---   "char" : every UTF-8 code point is its own token
---
--- A backend is just a module exposing `cut(str) -> token[]`. Adding a new
--- backend means dropping a file under `cword/backends/` and registering
--- the name in BACKENDS below.
+-- byte_start/byte_end are 1-indexed and inclusive so that
+-- string.sub(s, byte_start, byte_end) recovers the text exactly.
 
 local M = {}
 
@@ -31,9 +14,8 @@ local BACKENDS = {
   char = 'cword.backends.char',
 }
 
----Create a new Segmenter.
 ---@param opts table? { backend = "cjk"|"icu"|"char" }
----@return table segmenter
+---@return table
 function M.new(opts)
   opts = opts or {}
   local name = opts.backend or 'cjk'
@@ -52,14 +34,12 @@ function M.new(opts)
   }, { __index = M })
 end
 
----Cut a string into tokens.
 ---@param str string
----@return table[] tokens
+---@return table[]
 function M:cut(str)
   return self.backend.cut(str)
 end
 
----List known backend names.
 ---@return string[]
 function M.backends()
   local out = {}

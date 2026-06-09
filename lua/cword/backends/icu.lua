@@ -1,38 +1,21 @@
--- icu backend: ICU-compatible CJK run grouping, without the dictionary.
+-- ICU-compatible CJK run grouping without the dictionary.
 --
--- ICU's word segmenter (V8/Node uses `icu::BreakIterator::createWordInstance`)
--- merges consecutive CJK code points into one word using the UAX #29 rule
--- `$KanaKanji $KanaKanji {400}` and then passes the chain to its CJK
--- dictionary engine (cjdict.txt, ~316k entries) which picks a minimum-cost
--- segmentation via Viterbi DP. The dictionary lookups make ICU's output
--- non-deterministic for editor use: e.g. `你好世界` becomes `[你好, 世界]`
--- just because both entries happen to be in the dictionary.
+-- Mirrors UAX #29 word break rules: consecutive CJK code points merge
+-- into one word (`$KanaKanji $KanaKanji`), consecutive ASCII letters
+-- merge (`$ALetterPlus $ALetterPlus`), and the two rules never cross
+-- a script boundary because `$ALetterPlus` excludes CJK.
 --
--- This backend implements the *run grouping* part but skips the dictionary
--- AND skips merging across scripts. Two rules from UAX #29 drive this:
---   - `$KanaKanji $KanaKanji`: consecutive CJK stay together
---   - `$ALetterPlus $ALetterPlus`: consecutive ASCII letters stay together
---   - `$ALetterPlus` excludes CJK code points (see word.txt rule definitions),
---     so the ASCII rule never fires across a CJK/ASCII boundary
--- Therefore: a CJK run and an ASCII run never merge. Punctuation and
--- whitespace always break.
---
--- Examples:
---   "你好世界"   -> [你好世界]     (one CJK run)
---   "你好，世界" -> [你好, ，, 世界]
---   "你好hello"  -> [你好, hello]  (script change breaks merge)
---   "hello world"-> [hello, ' ', world]
+-- Skips ICU's dictionary engine (cjdict.txt + Viterbi DP), so the
+-- output is predictable instead of "[你好, 世界] because both happen
+-- to be in the corpus".
 
 local utf8 = require('cword.util.utf8')
 local cjk = require('cword.backends.cjk')
 
 local M = {}
 
----Determine the "script" of a token by inspecting its first codepoint.
----Returns "cjk", "ascii", or "other". Used to decide whether two adjacent
----word-like tokens should be merged.
----@param tok table token from cjk backend
----@return string
+---@param tok table
+---@return string "cjk" | "ascii" | "other"
 local function script(tok)
   local b = string.byte(tok.text, 1)
   if not b then

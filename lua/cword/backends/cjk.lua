@@ -1,22 +1,15 @@
--- cjk backend: each CJK character is its own word.
--- ASCII letters/digits/underscore form one word (vim's default `iskeyword`).
--- CJK punctuation and fullwidth forms are each their own non-word token.
--- ASCII punctuation is its own non-word token.
--- Whitespace runs are one non-word token.
+-- Default backend. Each CJK code point is its own word; ASCII letters,
+-- digits, and underscore group together (vim's default iskeyword);
+-- whitespace and punctuation are their own non-word tokens.
 --
--- This is the default behavior expected by Chinese editor users: each CJK
--- character is a "word" for `w`/`b` motion. Compare to `icu` backend which
--- groups consecutive CJK characters into one run.
---
--- Char classification (Unicode ranges):
---   space    : U+0009..U+000D, U+0020
---   cjk      : CJK Unified Ideographs (4E00-9FFF, 3400-4DBF),
---              Hiragana (3040-309F), Katakana (30A0-30FF),
---              Hangul Syllables (AC00-D7A3)
---   punct    : CJK Symbols and Punctuation (3000-303F),
---              Halfwidth and Fullwidth Forms (FF00-FFEF),
---              everything else (ASCII punctuation, symbols)
---   ascii    : ASCII letters (41-5A, 61-7A), digits (30-39), underscore (5F)
+-- Ranges used by `kind`:
+--   space  : 0x09..0x0D, 0x20
+--   cjk    : CJK Unified (4E00-9FFF, 3400-4DBF),
+--            Hiragana (3040-309F), Katakana (30A0-30FF),
+--            Hangul Syllables (AC00-D7A3)
+--   punct  : CJK Symbols (3000-303F), Halfwidth/Fullwidth (FF00-FFEF),
+--            ASCII punctuation
+--   ascii  : ASCII letters, digits, underscore
 
 local utf8 = require('cword.util.utf8')
 
@@ -36,7 +29,6 @@ local function kind(cp)
     return 'cjk'
   end
   if cp >= 0x3000 and cp <= 0x303F then
-    -- CJK Symbols and Punctuation (includes fullwidth space U+3000)
     return 'punct'
   end
   if
@@ -55,7 +47,7 @@ local function is_word(k)
 end
 
 ---@param str string
----@return table[] tokens -- {{text, byte_start, byte_end, is_word_like}, ...}
+---@return table[]
 function M.cut(str)
   local tokens = {}
   local i = 1
@@ -66,11 +58,9 @@ function M.cut(str)
     local start = i
 
     if k == 'space' or k == 'ascii' then
-      -- group consecutive runs of the same kind
       i = i + clen
       while i <= len do
-        local k2 = kind(utf8.codepoint(str, i))
-        if k2 ~= k then
+        if kind(utf8.codepoint(str, i)) ~= k then
           break
         end
         i = i + utf8.char_len(string.byte(str, i))
@@ -82,7 +72,6 @@ function M.cut(str)
         is_word_like = is_word(k),
       }
     else
-      -- cjk or punct: exactly one code point per token
       local end_byte = i + clen - 1
       tokens[#tokens + 1] = {
         text = string.sub(str, start, end_byte),

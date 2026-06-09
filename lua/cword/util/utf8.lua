@@ -1,19 +1,17 @@
--- UTF-8 byte-level helpers. No external dependency.
--- Codepoint is decoded from bytes (big-endian, network order).
--- We do NOT handle grapheme clusters (ZWJ emoji sequences are treated as
--- multiple code points); that is a separate concern and is intentionally
--- out of scope for word motion segmentation.
+-- Byte-level UTF-8 helpers. No external dependency.
+--
+-- We do NOT handle grapheme clusters (ZWJ emoji sequences are multiple
+-- code points here); that is intentionally out of scope for word motion.
 
 local M = {}
 
----Length in bytes of the UTF-8 character starting at byte `b`.
 ---@param b integer
 ---@return integer
 function M.char_len(b)
   if b < 0x80 then
     return 1
   elseif b < 0xC0 then
-    return 1 -- stray continuation byte; treat as 1
+    return 1
   elseif b < 0xE0 then
     return 2
   elseif b < 0xF0 then
@@ -23,8 +21,6 @@ function M.char_len(b)
   end
 end
 
----Decode the Unicode codepoint of the UTF-8 char starting at byte index `i`
----(1-indexed) in `str`.
 ---@param str string
 ---@param i integer
 ---@return integer
@@ -51,7 +47,6 @@ function M.codepoint(str, i)
   end
 end
 
----Advance `i` by one UTF-8 character.
 ---@param str string
 ---@param i integer
 ---@return integer
