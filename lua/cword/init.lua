@@ -38,8 +38,8 @@ end
 -- Wrap-aware cursor mover used by all four directions. `direction` is
 -- 'forward' | 'backward' | 'end_forward' | 'end_backward'.
 local function cursor_move(method, direction)
-  local is_fwd = direction == 'forward' or direction == 'end_forward'
-  local is_bwd = direction == 'backward' or direction == 'end_backward'
+  local is_fwd = direction == 'forward'
+  local is_bwd = direction == 'backward'
 
   return function()
     if not _seg then
