@@ -1,35 +1,16 @@
--- Spec helpers. Aliases itself to nvim-test.helpers when the runner
--- provides it (Phase 2 e2e), with a fallback eq for plain busted
--- (Phase 1). Domain helpers are added on top either way.
+-- Spec helpers. Re-exports nvim-test.helpers and adds cword domain
+-- helpers on top. Pattern after gitsigns.nvim/test/gs_helpers.lua.
 
-local M = {}
+local M = require('nvim-test.helpers')
 
-local ok, nvim_test = pcall(require, 'nvim-test.helpers')
-if ok then
-  M = nvim_test
-end
-
-if not M.eq then
-  local function inspect(v)
-    if type(v) == 'string' then
-      return string.format('%q', v)
-    end
-    if type(v) == 'table' then
-      local parts = {}
-      for i, x in ipairs(v) do
-        parts[i] = inspect(x)
-      end
-      return '{' .. table.concat(parts, ',') .. '}'
-    end
-    return tostring(v)
-  end
-
-  function M.eq(expected, actual, msg)
-    if expected ~= actual then
-      local prefix = msg and (msg .. ': ') or ''
-      error(string.format('%sexpected %s, got %s', prefix, inspect(expected), inspect(actual)), 2)
-    end
-  end
+-- After helpers.clear() spawns a fresh --embed session, that session
+-- has its own package.path that does not include the project's lua/
+-- tree. Push the current package.path into it so require inside
+-- exec_lua can find cword modules.
+function M.setup_path()
+  M.exec_lua(function(path)
+    package.path = path
+  end, package.path)
 end
 
 ---@param tokens table[]
