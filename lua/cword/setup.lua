@@ -71,38 +71,63 @@ local function make_handler(segmenter, method)
 
   return function()
     local win = vim.api.nvim_get_current_win()
+    local count = math.max(1, vim.v.count1)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
-    local cursor = col0 + 1
-    local line = vim.api.nvim_get_current_line()
-    local target = method(segmenter, line, cursor)
-    local new_row, new_col1 = row, target
+    local new_row, new_col1 = row, col0 + 1
 
-    -- Wrap forward past the end of the current line into the next
-    -- non-empty line. Empty lines stop the wrap (matches Vim's
-    -- built-in w which halts at the start of an empty line).
-    if is_forward and target >= #line then
-      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      for r = row + 1, #lines do
-        local start = first_word_start(segmenter, lines[r] or '')
-        if start then
-          new_row, new_col1 = r, start
-          break
-        elseif #(lines[r] or '') == 0 then
-          new_row, new_col1 = r, 1
-          break
-        end
+    for _ = 1, count do
+      local line
+      if new_row == row then
+        line = vim.api.nvim_get_current_line()
+      else
+        line = vim.api.nvim_buf_get_lines(0, new_row - 1, new_row, false)[1] or ''
       end
-    elseif is_backward and target <= 1 and col0 == 0 then
-      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      for r = row - 1, 1, -1 do
-        local last = last_word_end(segmenter, lines[r] or '')
-        if last then
-          new_row, new_col1 = r, last
-          break
-        elseif #(lines[r] or '') == 0 then
-          new_row, new_col1 = r, 1
+      local target = method(segmenter, line, new_col1)
+
+      -- Wrap forward past the end of the current line into the next
+      -- non-empty line. Empty lines stop the wrap (matches Vim's
+      -- built-in w which halts at the start of an empty line).
+      if is_forward and target >= #line then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local wrapped = false
+        for r = new_row + 1, #lines do
+          local start = first_word_start(segmenter, lines[r] or '')
+          if start then
+            new_row, new_col1 = r, start
+            wrapped = true
+            break
+          elseif #(lines[r] or '') == 0 then
+            new_row, new_col1 = r, 1
+            wrapped = true
+            break
+          end
+        end
+        if not wrapped then
+          -- No further lines; clamp to end of current line.
+          new_col1 = #line
           break
         end
+      elseif is_backward and target <= 1 and new_col1 == 1 then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local wrapped = false
+        for r = new_row - 1, 1, -1 do
+          local last = last_word_end(segmenter, lines[r] or '')
+          if last then
+            new_row, new_col1 = r, last
+            wrapped = true
+            break
+          elseif #(lines[r] or '') == 0 then
+            new_row, new_col1 = r, 1
+            wrapped = true
+            break
+          end
+        end
+        if not wrapped then
+          new_col1 = 1
+          break
+        end
+      else
+        new_col1 = target
       end
     end
 
@@ -122,21 +147,29 @@ function M.setup(opts)
 
   local keymap_opts = { noremap = true, silent = true }
   local motion = require('cword.motion')
-  vim.keymap.set('n', opts.keys.word_forward, make_handler(segmenter, motion.forward), keymap_opts)
+  -- Bind in both normal and visual modes. In visual mode the same
+  -- callback moves the cursor; vim's visual selection auto-extends
+  -- from the '< mark to the new cursor.
   vim.keymap.set(
-    'n',
+    { 'n', 'x' },
+    opts.keys.word_forward,
+    make_handler(segmenter, motion.forward),
+    keymap_opts
+  )
+  vim.keymap.set(
+    { 'n', 'x' },
     opts.keys.word_backward,
     make_handler(segmenter, motion.backward),
     keymap_opts
   )
   vim.keymap.set(
-    'n',
+    { 'n', 'x' },
     opts.keys.word_end_forward,
     make_handler(segmenter, motion.end_forward),
     keymap_opts
   )
   vim.keymap.set(
-    'n',
+    { 'n', 'x' },
     opts.keys.word_end_backward,
     make_handler(segmenter, motion.end_backward),
     keymap_opts

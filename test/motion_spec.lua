@@ -241,4 +241,31 @@ describe('motion e2e (cjk backend)', function()
 ]],
     })
   end)
+
+  it('3w repeats the motion', function()
+    put('你好世界')
+    helpers.feed('3w')
+    screen:expect({
+      grid = [[
+  你好世^界                                |
+  ~                                       |
+  ~                                       |
+                                          |
+]],
+    })
+  end)
+
+  it('vw extends visual selection to the next word', function()
+    put('你好世界')
+    helpers.feed('v')
+    helpers.feed('w')
+    screen:expect({
+      grid = [[
+  你^好世界                                |
+  ~                                       |
+  ~                                       |
+  -- VISUAL --                            |
+]],
+    })
+  end)
 end)
