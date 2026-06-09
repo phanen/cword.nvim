@@ -26,18 +26,25 @@ like `[你好, 世界]` for `你好世界`.
 cword.nvim keeps ICU-style CJK run grouping but skips the dictionary,
 so the segmentation is **predictable, configurable, and dependency-free**.
 
-| Backend | `你好世界`            | Notes                                                |
-| ------- | -------------------- | ---------------------------------------------------- |
-| `cjk`   | `你`, `好`, `世`, `界` | default, each CJK char is its own word                |
-| `icu`   | `你好世界`            | one CJK run, no dictionary merge (pure Lua re-implementation of UAX #29 run grouping) |
-| `icu_ffi` | `你好`, `世界`      | real ICU via FFI on libicuuc; matches JS `Intl.Segmenter` byte-for-byte (cjdict.txt + Viterbi DP) |
-| `char`  | `你`, `好`, `世`, `界` | one token per UTF-8 code point, ASCII letters split too |
+| Backend   | `你好世界` | Notes |
+| --------- | ---------- | ----- |
+| `icu_ffi` | `你好`, `世界` | real ICU via LuaJIT FFI on libicuuc; matches JavaScript `Intl.Segmenter` byte-for-byte (cjdict.txt dictionary + Viterbi DP). Auto-detected as the default when libicuuc is loadable. |
+| `cjk`     | `你`, `好`, `世`, `界` | pure-Lua fallback. Each CJK code point is its own word; ASCII letters/digits/`_` group via Vim's default `iskeyword`. No external dependency, fully predictable. |
+
+The default is picked at setup time:
+
+```lua
+-- libicuuc present (Arch, etc.) -> icu_ffi
+-- otherwise                          -> cjk
+require('cword').setup()             -- auto-pick
+require('cword').setup({ backend = 'cjk' }) -- explicit override
+```
 
 ## Requirements
 
 - Phase 1: any Lua 5.1+ runtime.
 - Phase 2: Neovim >= 0.9.
-- `icu_ffi` backend: libicuuc shared library (FFI). On Arch install `icu`; the binding is hard-wired to the `_78` symbol suffix.
+- `icu_ffi` backend: libicuuc shared library (FFI). On Arch install `icu`; the binding auto-detects the major version (50..80).
 
 ## Installation
 
