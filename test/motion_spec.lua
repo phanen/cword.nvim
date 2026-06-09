@@ -39,9 +39,9 @@ describe('motion algorithm (cjk backend)', function()
       eq(10, motion.forward(s, '你好世界', 7))
     end)
 
-    it('jumps across whitespace and CJK punctuation', function()
-      eq(5, motion.forward(s, '你 好', 1))
-      eq(7, motion.forward(s, '你，世界', 1))
+    it('stops at CJK punctuation (non-word, non-space)', function()
+      eq(5, motion.forward(s, '你 好', 1)) -- skip space to 好
+      eq(4, motion.forward(s, '你，世界', 1)) -- 你 -> ，
     end)
 
     it('jumps across script change', function()
@@ -67,6 +67,12 @@ describe('motion algorithm (cjk backend)', function()
       eq(7, motion.forward(s, '你好hello世界', 6))
       eq(12, motion.forward(s, '你好hello世界', 11))
     end)
+
+    it('stops at non-iskeyword boundaries', function()
+      eq(5, motion.forward(s, 'pkgs.hello.out', 1)) -- p -> .
+      eq(6, motion.forward(s, 'pkgs.hello.out', 5)) -- . -> h
+      eq(11, motion.forward(s, 'pkgs.hello.out', 6)) -- h -> .
+    end)
   end)
 
   describe('backward', function()
@@ -79,17 +85,21 @@ describe('motion algorithm (cjk backend)', function()
       eq(4, motion.backward(s, '你好世界', 6))
     end)
 
-    it('returns start of previous word when cursor at start of word', function()
+    it('returns start of preceding token when at start of word', function()
       eq(1, motion.backward(s, '你好世界', 4))
     end)
 
-    it('skips whitespace and punctuation', function()
-      eq(1, motion.backward(s, '你 ，世', 8))
-      eq(1, motion.backward(s, '你，世', 7))
+    it('goes back to non-word token at boundary', function()
+      eq(4, motion.backward(s, '你，世', 7)) -- 世 -> ，
+      eq(5, motion.backward(s, '你 ，世', 8)) -- 世 -> ， (space between)
     end)
 
     it('clamps to 1 when no previous word', function()
       eq(1, motion.backward(s, '你好', 1))
+    end)
+
+    it('stops at non-iskeyword boundaries', function()
+      eq(1, motion.backward(s, 'pkgs.hello.out', 5)) -- . -> p (pkgs start)
     end)
   end)
 
@@ -128,12 +138,6 @@ describe('motion algorithm (cjk backend)', function()
       eq(7, motion.forward(s, 'hello world', 1))
       eq(1, motion.backward(s, 'hello world', 7))
       eq(5, motion.end_forward(s, 'hello world', 1))
-    end)
-
-    it('skips non-iskeyword chars (dot, dash) at word boundaries', function()
-      -- pkgs.hello.out: pkgs(1-4) .(5) hello(6-10) .(11) out(12-14)
-      eq(6, motion.forward(s, 'pkgs.hello.out', 1)) -- pkgs -> hello
-      eq(12, motion.forward(s, 'pkgs.hello.out', 6)) -- hello -> out
     end)
   end)
 end)
@@ -177,7 +181,6 @@ describe('motion e2e (cjk backend)', function()
     helpers.exec_lua(function()
       local cword = require('cword')
       cword.setup({ backend = 'cjk' })
-      -- Bind manually: setup() no longer auto-binds keys.
       vim.keymap.set({ 'n', 'x' }, 'w', cword.move_forward, { noremap = true, silent = true })
       vim.keymap.set({ 'n', 'x' }, 'b', cword.move_backward, { noremap = true, silent = true })
       vim.keymap.set({ 'n', 'x' }, 'e', cword.move_end_forward, { noremap = true, silent = true })

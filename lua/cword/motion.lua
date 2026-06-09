@@ -7,6 +7,12 @@
 
 local M = {}
 
+---@param tok table
+---@return boolean
+local function is_whitespace(tok)
+  return tok.text:match('^%s+$') ~= nil
+end
+
 local function clamp(line, cursor)
   if #line == 0 then
     return 1
@@ -23,11 +29,11 @@ end
 ---@param segmenter table
 ---@param line string
 ---@param cursor integer 1-indexed byte offset
----@return integer column of next word start, or #line
+---@return integer column of next non-whitespace token start, or #line
 function M.forward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
   for _, t in ipairs(segmenter:cut(line)) do
-    if t.is_word_like and t.byte_start > cursor then
+    if t.byte_start > cursor and not is_whitespace(t) then
       return t.byte_start
     end
   end
@@ -37,20 +43,24 @@ end
 ---@param segmenter table
 ---@param line string
 ---@param cursor integer
----@return integer column of previous word start, or 1
+---@return integer column of previous non-whitespace token start, or 1
 function M.backward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
-  local current, prev
+  local inside, prev
   for _, t in ipairs(segmenter:cut(line)) do
-    if t.is_word_like and t.byte_start < cursor then
-      if cursor <= t.byte_end then
-        current = t
-      else
+    if t.byte_start < cursor then
+      if not is_whitespace(t) then
         prev = t
+      end
+      if t.is_word_like and cursor <= t.byte_end then
+        inside = t
       end
     end
   end
-  return (current or prev or { byte_start = 1 }).byte_start
+  if inside then
+    return inside.byte_start
+  end
+  return (prev or { byte_start = 1 }).byte_start
 end
 
 ---@param segmenter table
