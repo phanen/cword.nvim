@@ -1,39 +1,56 @@
--- Shared helpers for cword specs.
--- Run via: busted --lpath='lua/?.lua;lua/?/init.lua' test/
--- or:      make test
+-- Spec entry point. Pattern after gitsigns.nvim's test/gs_helpers.lua:
+-- re-export `nvim-test.helpers` when the runner provides it, then layer
+-- the cword domain helpers on top. Specs always go through this module,
+-- so the same `describe`/`it`/`eq`/etc. surface works under plain
+-- busted (Phase 1, no nvim-test) and under nvim-test (Phase 2 e2e).
+--
+-- Spec usage:
+--
+--   local helpers = require('test.cword_helpers')
+--   helpers.eq('foo', helpers.text_of(seg:cut('foo')))
+--
+-- Under nvim-test, `helpers` transparently exposes everything
+-- nvim-test.helpers does (`exec_lua`, `feed`, `clear`, `api`, `fn`,
+-- `Screen`, etc.), so motion specs can call `helpers.feed('w')` and
+-- `Screen.new(...):expect(...)` without a separate require.
 
 local M = {}
 
----Format a value for display in error messages. Avoids depending on
----`vim.inspect` so this also works when specs are run with plain Lua
----+ busted (no Neovim).
----@param v any
----@return string
-local function inspect(v)
-  if type(v) == 'string' then
-    return string.format('%q', v)
-  end
-  if type(v) == 'table' then
-    local parts = {}
-    for i, x in ipairs(v) do
-      parts[i] = inspect(x)
-    end
-    return '{' .. table.concat(parts, ',') .. '}'
-  end
-  return tostring(v)
+local ok, nvim_test = pcall(require, 'nvim-test.helpers')
+if ok then
+  -- Direct aliasing instead of copy: same trick gitsigns uses. Mutating
+  -- the shared nvim-test table is fine here because cword_helpers is
+  -- the only consumer in this test tree.
+  M = nvim_test
 end
 
----Strict equality with a clear failure message.
----Argument order matches gitsigns.nvim convention: expected, actual, msg.
----@param expected any
----@param actual any
----@param msg string?
-function M.eq(expected, actual, msg)
-  if expected ~= actual then
-    local prefix = msg and (msg .. ': ') or ''
-    error(string.format('%sexpected %s, got %s', prefix, inspect(expected), inspect(actual)), 2)
+-- Fallback `eq` for plain busted (when nvim-test is not on the path).
+-- Same semantics as `assert.are.same`: deep-equal with a clear failure
+-- message that names both sides.
+if not M.eq then
+  local function inspect(v)
+    if type(v) == 'string' then
+      return string.format('%q', v)
+    end
+    if type(v) == 'table' then
+      local parts = {}
+      for i, x in ipairs(v) do
+        parts[i] = inspect(x)
+      end
+      return '{' .. table.concat(parts, ',') .. '}'
+    end
+    return tostring(v)
+  end
+
+  function M.eq(expected, actual, msg)
+    if expected ~= actual then
+      local prefix = msg and (msg .. ': ') or ''
+      error(string.format('%sexpected %s, got %s', prefix, inspect(expected), inspect(actual)), 2)
+    end
   end
 end
+
+-- Domain helpers for cword specs.
 
 ---Concatenate token texts with `|` as a separator.
 ---@param tokens table[]
@@ -53,7 +70,7 @@ function M.slice(tok)
   return string.format('%d-%d', tok.byte_start, tok.byte_end)
 end
 
----Pretty-print a token list. Useful for debugging.
+---Pretty-print a token list. Useful for debugging a failing spec.
 ---@param tokens table[]
 ---@return string
 function M.fmt_tokens(tokens)
