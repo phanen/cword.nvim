@@ -164,6 +164,14 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
 
   local seg = Segmenter.new({ backend = 'icu_ffi' })
 
+  it('auto-detects the loaded ICU major version', function()
+    eq('number', type(icu_ffi._icu_version))
+    assert(
+      icu_ffi._icu_version >= 50 and icu_ffi._icu_version <= 80,
+      'detected icu version looks implausible: ' .. tostring(icu_ffi._icu_version)
+    )
+  end)
+
   it('matches JS Intl.Segmenter for cjdict merges', function()
     -- [你好, 世界] is the canonical example: both entries are in cjdict.txt.
     eq('你好|世界', text_of(seg:cut('你好世界')))

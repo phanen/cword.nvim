@@ -1,31 +1,64 @@
 -- ICU-backed word segmentation via LuaJIT FFI on libicuuc.
 --
--- This backend calls the real ICU library (the same code path V8 uses
--- for `Intl.Segmenter`) and therefore matches the output of
--- JavaScript's Intl.Segmenter byte-for-byte:
+-- Calls the real ICU library (the same code path V8 uses for
+-- `Intl.Segmenter`), so the output matches JavaScript's
+-- Intl.Segmenter byte-for-byte:
 --
 --   "你好世界"      -> [你好, 世界]          (cjdict.txt merge)
 --   "南京市长江大桥" -> [南京市, 长江, 大, 桥] (Viterbi DP result)
 --
--- Requires libicuuc at runtime. The shared object symbol names carry
--- the ICU major-version suffix; this file is hard-wired to `_78`
--- (Arch's current icu package). Update the suffix if the host system
--- upgrades ICU.
+-- The icu major version is detected at load time by probing for
+-- versioned symbol names (`ubrk_close_80` down to `ubrk_close_50`)
+-- via the FFI loader. The binding follows whatever major version
+-- libicuuc.so happens to expose.
 --
--- The FFI plumbing: ICU's BreakIterator takes UTF-16, so we
---   (a) convert input UTF-8 -> UTF-16 via ucnv_toUChars,
---   (b) ask ICU for word boundaries (positions in UTF-16 code units),
---   (c) convert each position back to a UTF-8 byte index with a
---       pure-Lua walker. We avoid vim.str_byteindex because the
---       function is unavailable in the nvim-test runner's harness,
---       and routing each call through helpers.exec_lua per token
---       would be needlessly slow.
+-- UTF-16 -> UTF-8 byte conversion prefers vim.str_byteindex when it
+-- is available in the running Lua context, and falls back to a
+-- pure-Lua walker otherwise. The fallback matters under nvim-test's
+-- runner harness, where `vim.str_byteindex` is nil but the target
+-- nvim has it (and vice versa for plain Lua + busted runs).
 
 local M = {}
 
 local ffi = require('ffi')
 
-local ICU_VER = '78'
+-- ---------------------------------------------------------------------------
+-- Version probe
+-- ---------------------------------------------------------------------------
+
+local function detect_icu_version()
+  local ok, icu = pcall(ffi.load, 'icuuc')
+  if not ok then
+    return nil, icu
+  end
+
+  -- Scan high-to-low so the newest installed version wins. We probe
+  -- ubrk_close_<N> via the loaded library userdata, not ffi.C (the
+  -- latter is for the default C namespace, not dlopen'd libraries).
+  for v = 80, 50, -1 do
+    local sym = 'ubrk_close_' .. v
+    pcall(function()
+      ffi.cdef('void ' .. sym .. '(void*);')
+    end)
+    local ok_bind, fn = pcall(function()
+      return icu[sym]
+    end)
+    if ok_bind and type(fn) == 'cdata' then
+      return v, icu
+    end
+  end
+  return nil, 'libicuuc found but no ubrk_close_<N> symbol in 50..80'
+end
+
+local ICU_VER, icu_or_err = detect_icu_version()
+if not ICU_VER then
+  -- Surface the reason when the user tries to use this backend.
+  -- Tests detect this via `pcall(require, 'cword.backends.icu_ffi')`
+  -- and skip on failure.
+  error('cword: ' .. tostring(icu_or_err))
+end
+
+local icu = icu_or_err
 
 ffi.cdef([[
 typedef struct UBreakIterator UBreakIterator;
@@ -44,25 +77,24 @@ int32_t ubrk_first_]] .. ICU_VER .. [[(UBreakIterator* bi);
 int32_t ubrk_next_]] .. ICU_VER .. [[(UBreakIterator* bi);
 ]])
 
-local icu = ffi.load('icuuc')
+M._icu_version = ICU_VER
 
--- Convert UTF-8 -> UTF-16. Returns the buffer plus its length in
--- code units (not bytes).
-local function to_utf16(s)
-  local status = ffi.new('int32_t[1]', 0)
-  local cnv = icu.ucnv_open_78('utf-8', status)
-  -- Worst case: every input byte becomes a surrogate pair (2 units).
-  local buf = ffi.new('uint16_t[?]', #s * 2 + 2)
-  local n = icu.ucnv_toUChars_78(cnv, buf, #s * 2 + 2, s, #s, status)
-  icu.ucnv_close_78(cnv)
-  return buf, n
-end
+-- ---------------------------------------------------------------------------
+-- UTF-16 -> UTF-8 byte conversion
+-- ---------------------------------------------------------------------------
 
--- Convert a 0-indexed UTF-16 code unit position to a 0-indexed UTF-8
--- byte offset. BMP codepoints consume 1 UTF-16 unit, supplementary
--- plane codepoints consume 2. Returns `#str` when target_u16 is at or
--- past the end.
+-- `vim.str_byteindex` exists in real Neovim and in nvim-test's target
+-- session; the nvim-test runner harness strips it. The fallback
+-- walker is small enough that using it under the harness is fine.
+local HAS_VIM_BYTEINDEX = type(vim) == 'table' and type(vim.str_byteindex) == 'function'
+
 local function utf16_to_byte(str, target_u16)
+  if HAS_VIM_BYTEINDEX then
+    return vim.str_byteindex(str, 'utf-16', target_u16, false)
+  end
+
+  -- Pure-Lua fallback. BMP codepoints consume 1 UTF-16 unit;
+  -- supplementary plane codepoints consume 2.
   local i = 1
   local u = 0
   local len = #str
@@ -78,7 +110,6 @@ local function utf16_to_byte(str, target_u16)
       u = u + 1
       i = i + 3
     else
-      -- 4-byte UTF-8: codepoint >= U+10000, takes 2 UTF-16 units
       u = u + 2
       i = i + 4
     end
@@ -86,8 +117,10 @@ local function utf16_to_byte(str, target_u16)
   return i - 1
 end
 
--- Decode the first UTF-8 codepoint of `s` starting at byte index
--- `byte_idx` (1-indexed). Returns -1 when out of range.
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
 local function first_codepoint(s, byte_idx)
   if byte_idx > #s then
     return -1
@@ -136,6 +169,25 @@ local function is_word_like_char(cp)
   return true
 end
 
+local function to_utf16(s)
+  local open_fn = icu['ucnv_open_' .. ICU_VER]
+  local to_fn = icu['ucnv_toUChars_' .. ICU_VER]
+  local close_fn = icu['ucnv_close_' .. ICU_VER]
+  if not (open_fn and to_fn and close_fn) then
+    error('cword: icu version ' .. ICU_VER .. ' converter symbols not bound')
+  end
+  local status = ffi.new('int32_t[1]', 0)
+  local cnv = open_fn('utf-8', status)
+  local buf = ffi.new('uint16_t[?]', #s * 2 + 2)
+  local n = to_fn(cnv, buf, #s * 2 + 2, s, #s, status)
+  close_fn(cnv)
+  return buf, n
+end
+
+-- ---------------------------------------------------------------------------
+-- Public API
+-- ---------------------------------------------------------------------------
+
 ---@param str string
 ---@return table[]
 function M.cut(str)
@@ -145,34 +197,31 @@ function M.cut(str)
 
   local utf16, n = to_utf16(str)
   local status = ffi.new('int32_t[1]', 0)
-  local bi = icu.ubrk_open_78(1, 'en_US', utf16, n, status) -- 1 = UBRK_WORD
+  local open_fn = icu['ubrk_open_' .. ICU_VER]
+  local first_fn = icu['ubrk_first_' .. ICU_VER]
+  local next_fn = icu['ubrk_next_' .. ICU_VER]
+  local close_fn = icu['ubrk_close_' .. ICU_VER]
+  local bi = open_fn(1, 'en_US', utf16, n, status) -- 1 = UBRK_WORD
   if bi == nil then
     return {}
   end
 
-  -- ICU returns break positions in UTF-16 code units.
-  local positions = { icu.ubrk_first_78(bi) }
+  local positions = { first_fn(bi) }
   while true do
-    local p = icu.ubrk_next_78(bi)
+    local p = next_fn(bi)
     if p == -1 then
       break
     end
     table.insert(positions, p)
   end
-  icu.ubrk_close_78(bi)
+  close_fn(bi)
 
   local tokens = {}
   for i = 1, #positions - 1 do
     local u_start = positions[i]
     local u_end = positions[i + 1]
-    local byte_start = utf16_to_byte(str, u_start) + 1 -- 1-indexed
-    local byte_end = utf16_to_byte(str, u_end) -- 0-indexed; convert below
-    -- `utf16_to_byte` returns the 0-indexed byte offset of the FIRST
-    -- byte whose preceding UTF-16 index is u_end. For a boundary
-    -- between two code points, that equals the start of the NEXT
-    -- code point, which is the byte AFTER the last byte of this
-    -- token's text. So byte_end in 1-indexed inclusive form is the
-    -- same value.
+    local byte_start = utf16_to_byte(str, u_start) + 1
+    local byte_end = utf16_to_byte(str, u_end)
     if byte_end >= byte_start then
       local cp = first_codepoint(str, byte_start)
       tokens[#tokens + 1] = {
