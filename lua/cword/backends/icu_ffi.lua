@@ -253,7 +253,21 @@ function M.cut(str)
       end
     end
   end
-  return tokens
+
+  -- Merge adjacent same-is_word_like non-word tokens (ICU may
+  -- split '**' into two non-word tokens; the cjk backend groups them).
+  -- Word tokens stay as-is (ICU's CJK grouping is already correct).
+  local merged = {}
+  for _, t in ipairs(tokens) do
+    local last = merged[#merged]
+    if last and not last.is_word_like and last.is_word_like == t.is_word_like then
+      last.text = last.text .. t.text
+      last.byte_end = t.byte_end
+    else
+      merged[#merged + 1] = t
+    end
+  end
+  return merged
 end
 
 return M

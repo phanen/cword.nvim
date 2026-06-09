@@ -11,10 +11,32 @@
 --            everything not matched by iskeyword
 --   ascii  : iskeyword hit (typically @,48-57,_,192-255)
 
-local utf8 = require('cword.util.utf8')
 local iskeyword = require('cword.util.iskeyword')
 
 local M = {}
+
+local function codepoint(str, idx)
+  local b1 = string.byte(str, idx)
+  if not b1 then
+    return -1
+  end
+  if b1 < 0x80 then
+    return b1
+  end
+  if b1 < 0xE0 then
+    local b2 = string.byte(str, idx + 1) or 0
+    return ((b1 - 0xC0) * 0x40) + (b2 - 0x80)
+  end
+  if b1 < 0xF0 then
+    local b2 = string.byte(str, idx + 1) or 0
+    local b3 = string.byte(str, idx + 2) or 0
+    return ((b1 - 0xE0) * 0x1000) + ((b2 - 0x80) * 0x40) + (b3 - 0x80)
+  end
+  local b2 = string.byte(str, idx + 1) or 0
+  local b3 = string.byte(str, idx + 2) or 0
+  local b4 = string.byte(str, idx + 3) or 0
+  return ((b1 - 0xF0) * 0x40000) + ((b2 - 0x80) * 0x1000) + ((b3 - 0x80) * 0x40) + (b4 - 0x80)
+end
 
 local function kind(cp)
   if cp == 0x09 or cp == 0x0A or cp == 0x0B or cp == 0x0C or cp == 0x0D or cp == 0x20 then
@@ -52,19 +74,36 @@ function M.cut(str)
   local i = 1
   local len = #str
   while i <= len do
-    local k = kind(utf8.codepoint(str, i))
-    local clen = utf8.char_len(string.byte(str, i))
+    local k = kind(codepoint(str, i))
+    local b1 = string.byte(str, i)
+    local clen
+    if b1 < 0x80 then
+      clen = 1
+    elseif b1 < 0xE0 then
+      clen = 2
+    elseif b1 < 0xF0 then
+      clen = 3
+    else
+      clen = 4
+    end
     local start = i
 
     if k == 'space' or k == 'ascii' or k == 'punct' then
-      -- Group consecutive runs of the same kind. CJK is not
-      -- grouped (keep per-char for word motion).
       i = i + clen
       while i <= len do
-        if kind(utf8.codepoint(str, i)) ~= k then
+        if kind(codepoint(str, i)) ~= k then
           break
         end
-        i = i + utf8.char_len(string.byte(str, i))
+        local b = string.byte(str, i)
+        if b < 0x80 then
+          i = i + 1
+        elseif b < 0xE0 then
+          i = i + 2
+        elseif b < 0xF0 then
+          i = i + 3
+        else
+          i = i + 4
+        end
       end
       tokens[#tokens + 1] = {
         text = string.sub(str, start, i - 1),
