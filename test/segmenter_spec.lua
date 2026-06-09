@@ -16,17 +16,14 @@ describe('segmenter', function()
       local ok, err = pcall(Segmenter.new, { backend = 'nope' })
       eq(false, ok)
       assert(err:find('nope'), 'error should mention the bad name')
-      assert(
-        err:find('cjk') and err:find('icu') and err:find('char'),
-        'error should list known backends'
-      )
+      assert(err:find('cjk') and err:find('icu_ffi'), 'error should list known backends')
     end)
   end)
 
   describe('backends()', function()
     it('returns the sorted list of registered backend names', function()
       local names = Segmenter.backends()
-      eq('char,cjk,icu,icu_ffi', table.concat(names, ','))
+      eq('cjk,icu_ffi', table.concat(names, ','))
     end)
   end)
 end)
@@ -131,30 +128,6 @@ describe('cjk backend', function()
   end)
 end)
 
-describe('icu backend', function()
-  local seg = Segmenter.new({ backend = 'icu' })
-
-  it('groups consecutive CJK chars into one run', function()
-    eq('你好世界', text_of(seg:cut('你好世界')))
-  end)
-
-  it('keeps CJK and ASCII runs separated by a script change', function()
-    eq('你好|hello|世界', text_of(seg:cut('你好hello世界')))
-  end)
-
-  it('breaks on CJK punctuation', function()
-    eq('你好|，|世界', text_of(seg:cut('你好，世界')))
-  end)
-
-  it('leaves ASCII-only input unchanged from the cjk backend', function()
-    eq('hello| |world', text_of(seg:cut('hello world')))
-  end)
-
-  it('handles empty input', function()
-    eq('', text_of(seg:cut('')))
-  end)
-end)
-
 describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
   -- Skip on systems without libicuuc; the load would fail.
   local ok, icu_ffi = pcall(require, 'cword.backends.icu_ffi')
@@ -211,24 +184,6 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
       parts[#parts + 1] = string.sub(s, tok.byte_start, tok.byte_end)
     end
     eq(s, table.concat(parts))
-  end)
-end)
-
-describe('char backend', function()
-  local seg = Segmenter.new({ backend = 'char' })
-
-  it('emits one token per UTF-8 code point', function()
-    eq('你|好', text_of(seg:cut('你好')))
-    eq('h|e|l|l|o', text_of(seg:cut('hello')))
-  end)
-
-  it('still treats whitespace as non-word-like', function()
-    local t = seg:cut('h ')
-    eq('false', tostring(t[2].is_word_like))
-  end)
-
-  it('handles empty input', function()
-    eq('', text_of(seg:cut('')))
   end)
 end)
 

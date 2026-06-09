@@ -131,12 +131,18 @@ describe('motion algorithm (cjk backend)', function()
   end)
 end)
 
-describe('motion algorithm (icu backend)', function()
-  local s = seg('icu')
+describe('motion algorithm (icu_ffi backend)', function()
+  local ok_ffi, _ = pcall(require, 'cword.backends.icu_ffi')
+  if not ok_ffi then
+    return
+  end
+  local s = seg('icu_ffi')
 
-  it('keeps consecutive CJK as one run; no forward jump inside the run', function()
-    eq(12, motion.forward(s, '你好世界', 1))
-    eq(12, motion.forward(s, '你好世界', 6))
+  it('dictionary merges break into multiple runs', function()
+    -- icu_ffi segments 你好世界 as [你好, 世界], so forward from 1
+    -- jumps to byte 7 (start of 世界), not 12 (end of line).
+    eq(7, motion.forward(s, '你好世界', 1))
+    eq(7, motion.forward(s, '你好世界', 6))
   end)
 
   it('still jumps across runs via whitespace', function()

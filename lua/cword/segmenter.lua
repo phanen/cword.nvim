@@ -10,9 +10,7 @@ local M = {}
 
 local BACKENDS = {
   cjk = 'cword.backends.cjk',
-  icu = 'cword.backends.icu',
   icu_ffi = 'cword.backends.icu_ffi',
-  char = 'cword.backends.char',
 }
 
 ---@param opts table? { backend = "cjk"|"icu"|"char" }
