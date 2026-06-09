@@ -71,10 +71,10 @@ function M.end_forward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
   for _, t in ipairs(segmenter:cut(line)) do
     if t.byte_end > cursor then
-      return t.byte_end
+      return t.byte_end + 1
     end
   end
-  return #line
+  return #line + 1
 end
 
 ---@param segmenter table
