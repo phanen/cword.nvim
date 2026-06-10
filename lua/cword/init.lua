@@ -212,6 +212,71 @@ M.cmdline_delete_word = function()
   end
 end
 
+-- Direct operator replacements (dw/cw/de/ce/db/cb). Bypass
+-- operator-pending mode and Neovim's cursor-API clamping by
+-- using nvim_buf_set_text with the motion's 1-indexed target.
+local function op_range(method)
+  if not _seg then
+    M.setup()
+  end
+  local win = vim.api.nvim_get_current_win()
+  local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
+  local line = vim.api.nvim_get_current_line()
+  local target = method(_seg, line, col0 + 1)
+  return row, col0, target
+end
+
+-- Forward: target is 1-idx next-word-start or #line+1.
+-- end_col = target - 1 is the 0-idx exclusive end.
+
+M.delete_forward = function()
+  local row, col0, target = op_range(M.motion.forward)
+  if target - 1 > col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
+  end
+end
+
+M.delete_end_forward = function()
+  local row, col0, target = op_range(M.motion.end_forward)
+  if target - 1 > col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
+  end
+end
+
+M.change_forward = function()
+  local row, col0, target = op_range(M.motion.forward)
+  if target - 1 > col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
+  end
+  vim.cmd('startinsert')
+end
+
+M.change_end_forward = function()
+  local row, col0, target = op_range(M.motion.end_forward)
+  if target - 1 > col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
+  end
+  vim.cmd('startinsert')
+end
+
+-- Backward: target (byte_start) = 1-idx of previous word.
+-- Delete from target-1 (beginning of the word) to col0 (cursor).
+
+M.delete_backward = function()
+  local row, col0, target = op_range(M.motion.backward)
+  if target <= col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
+  end
+end
+
+M.change_backward = function()
+  local row, col0, target = op_range(M.motion.backward)
+  if target <= col0 then
+    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
+  end
+  vim.cmd('startinsert')
+end
+
 -- Exposed for spec probing.
 M._default_backend = default_backend
 

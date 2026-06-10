@@ -134,3 +134,52 @@ describe('command-line mode', function()
     eq('function', cword.cd)
   end)
 end)
+
+describe('direct operators', function()
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+    helpers.exec_lua(function()
+      require('cword').setup({ backend = 'cjk' })
+      vim.keymap.set('n', 'dw', require('cword').delete_forward, { noremap = true, silent = true })
+      vim.keymap.set(
+        'n',
+        'de',
+        require('cword').delete_end_forward,
+        { noremap = true, silent = true }
+      )
+      vim.keymap.set('n', 'cw', require('cword').change_forward, { noremap = true, silent = true })
+      vim.keymap.set(
+        'n',
+        'ce',
+        require('cword').change_end_forward,
+        { noremap = true, silent = true }
+      )
+      vim.keymap.set('n', 'db', require('cword').delete_backward, { noremap = true, silent = true })
+    end)
+  end)
+
+  it('dw deletes word on CJK', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好我' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('dw')
+    local line = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    eq('你好', line)
+  end)
+
+  it('de deletes to end of word on CJK', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好我' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('de')
+    local line = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    eq('你好', line)
+  end)
+
+  it('dw deletes word on ASCII', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local line = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    eq('world', line)
+  end)
+end)

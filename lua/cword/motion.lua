@@ -37,7 +37,7 @@ function M.forward(segmenter, line, cursor)
       return t.byte_start
     end
   end
-  return #line
+  return #line + 1
 end
 
 ---@param segmenter table
