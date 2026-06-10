@@ -19,11 +19,19 @@ instead of skipping an entire sentence.
     local cword = require('cword')
     local opts = { noremap = true, silent = true }
 
-    -- Normal + visual + operator-pending
-    vim.keymap.set({ 'n', 'x', 'o' }, 'w',  cword.move_forward, opts)
-    vim.keymap.set({ 'n', 'x', 'o' }, 'b',  cword.move_backward, opts)
-    vim.keymap.set({ 'n', 'x', 'o' }, 'e',  cword.move_end_forward, opts)
-    vim.keymap.set({ 'n', 'x', 'o' }, 'ge', cword.move_end_backward, opts)
+    -- Normal + visual
+    vim.keymap.set({ 'n', 'x' }, 'w',  cword.move_forward, opts)
+    vim.keymap.set({ 'n', 'x' }, 'b',  cword.move_backward, opts)
+    vim.keymap.set({ 'n', 'x' }, 'e',  cword.move_end_forward, opts)
+    vim.keymap.set({ 'n', 'x' }, 'ge', cword.move_end_backward, opts)
+
+    -- Direct operators (dw/cw/de/ce/db/cb)
+    vim.keymap.set('n', 'dw', cword.delete_forward, opts)
+    vim.keymap.set('n', 'cw', cword.change_forward, opts)
+    vim.keymap.set('n', 'de', cword.delete_end_forward, opts)
+    vim.keymap.set('n', 'ce', cword.change_end_forward, opts)
+    vim.keymap.set('n', 'db', cword.delete_backward, opts)
+    vim.keymap.set('n', 'cb', cword.change_backward, opts)
 
     -- Insert mode
     vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
@@ -55,27 +63,6 @@ instead of skipping an entire sentence.
 | `cword.cmdline_delete_word`  | Command-line `<c-w>`. Delete word backward. |
 | `cword.Segmenter`            | Low-level segmentation (`:cut(str)` → token list). |
 | `cword.motion`               | Pure motion functions (`forward(seg, line, cursor)` etc.). |
-
-### Suggested setup
-
-```lua
-local cword = require('cword')
-cword.setup() -- auto-picks backend, optional { backend = 'cjk' }
-
-local opts = { noremap = true, silent = true }
-vim.keymap.set({ 'n', 'x', 'o' }, 'w', cword.move_forward, opts)
-vim.keymap.set({ 'n', 'x', 'o' }, 'b', cword.move_backward, opts)
-vim.keymap.set({ 'n', 'x', 'o' }, 'e', cword.move_end_forward, opts)
-vim.keymap.set({ 'n', 'x', 'o' }, 'ge', cword.move_end_backward, opts)
-
-vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
-vim.keymap.set('i', '<m-b>', cword.insert_backward, opts)
-vim.keymap.set('i', '<c-w>', cword.insert_delete_word, opts)
-
-vim.keymap.set('c', '<m-f>', cword.cmdline_forward, opts)
-vim.keymap.set('c', '<m-b>', cword.cmdline_backward, opts)
-vim.keymap.set('c', '<c-w>', cword.cmdline_delete_word, opts)
-```
 
 ### Backends
 
