@@ -51,10 +51,16 @@ instead of skipping an entire sentence.
 | Function                     | Description |
 | ---------------------------- | ----------- |
 | `require('cword').setup(opts?)` | Init segmenter (optional, auto-called on first use). `opts.backend` = `"cjk"` or `"icu_ffi"`. |
-| `cword.move_forward`         | `w` handler. Supports count, wraps across lines, visual + operator-pending modes. |
+| `cword.move_forward`         | `w` handler. Supports count, wraps, visual mode. |
 | `cword.move_backward`        | `b` handler. |
 | `cword.move_end_forward`     | `e` handler. |
 | `cword.move_end_backward`    | `ge` handler. |
+| `cword.delete_forward`       | `dw`: delete to next word (direct buffer op, no operator-pending). |
+| `cword.change_forward`       | `cw`: change to next word. |
+| `cword.delete_end_forward`   | `de`: delete to end of word. |
+| `cword.change_end_forward`   | `ce`: change to end of word. |
+| `cword.delete_backward`      | `db`: delete to previous word. |
+| `cword.change_backward`      | `cb`: change to previous word. |
 | `cword.insert_forward`       | Insert-mode `<m-f>` / `<alt-f>`. Move cursor forward one word. |
 | `cword.insert_backward`      | Insert-mode `<m-b>` / `<alt-b>`. Move cursor backward one word. |
 | `cword.insert_delete_word`   | Insert-mode `<c-w>`. Delete word backward. |
