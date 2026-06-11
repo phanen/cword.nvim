@@ -159,6 +159,144 @@ describe('operator-pending mode', function()
   end)
 end)
 
+-- icu_ffi segments "你好" as one word (cjdict merge). The operator
+-- handlers must use that boundary verbatim, so dw eats the merged
+-- "你好" rather than just the first character. The test is skipped
+-- when libicuuc is not available in the test environment.
+describe('operator-pending mode (icu_ffi backend)', function()
+  local screen
+  local ok_ffi = false
+
+  setup(function()
+    ok_ffi = pcall(require, 'cword.backends.icu_ffi')
+  end)
+
+  before_each(function()
+    if not ok_ffi then
+      return
+    end
+    helpers.clear()
+    helpers.setup_path()
+    helpers.exec_lua(function()
+      local cword = require('cword')
+      cword.setup({ backend = 'icu_ffi' })
+      local m = cword
+      local opts = { noremap = true, silent = true }
+      vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
+      vim.keymap.set({ 'n', 'x' }, 'b', m.move_backward, opts)
+      vim.keymap.set('o', 'w', m.op_forward, vim.tbl_extend('force', opts, { expr = true }))
+      vim.keymap.set('o', 'b', m.op_backward, vim.tbl_extend('force', opts, { expr = true }))
+      vim.keymap.set('o', 'e', m.op_end_forward, vim.tbl_extend('force', opts, { expr = true }))
+    end)
+    screen = Screen.new(40, 6)
+    screen:attach()
+  end)
+
+  after_each(function()
+    if screen then
+      screen:detach()
+    end
+  end)
+
+  it('dw eats the merged cjdict run as one word', function()
+    if not ok_ffi then
+      return
+    end
+    -- "你好" is a single icu token; dw from col 0 should consume
+    -- "你好" plus the following whitespace.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dw on the second CJK word deletes it', function()
+    if not ok_ffi then
+      return
+    end
+    -- Cursor on the start of "世界" (col 7, the char boundary
+    -- right after the space). dw eats the merged run.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 })
+    helpers.feed('dw')
+    eq('你好 ', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('cw replaces the merged run and enters insert mode', function()
+    if not ok_ffi then
+      return
+    end
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
+    eq('i', mode:sub(1, 1))
+  end)
+
+  it('db eats the preceding merged run', function()
+    if not ok_ffi then
+      return
+    end
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 })
+    helpers.feed('db')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de deletes the current merged run to its end', function()
+    if not ok_ffi then
+      return
+    end
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    eq(' 世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dw wraps across newlines using icu boundaries', function()
+    if not ok_ffi then
+      return
+    end
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好', '世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('世界', lines[1])
+  end)
+
+  it('dw on Latin eats the identifier and stops at the dot', function()
+    if not ok_ffi then
+      return
+    end
+    -- cword's `w` lands on the next non-whitespace token, which
+    -- is the `.` here (it is not whitespace, just non-word). dw
+    -- therefore eats "pkgs" and leaves ".hello" — same shape as
+    -- the cjk backend, where the cjk motion spec asserts
+    -- forward("pkgs.hello.out", 1) == 5.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'pkgs.hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('.hello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dw from the dot eats just the dot (next non-ws boundary)', function()
+    if not ok_ffi then
+      return
+    end
+    -- Same shape as the cjk backend: forward on a non-word token
+    -- (the dot) lands on the byte_start of the next non-ws token
+    -- ("hello"). The "on the char + c - 2" visual formula
+    -- therefore collapses the dot and "hello" to land on a single
+    -- column, deleting only the dot here.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'pkgs.hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 })
+    helpers.feed('dw')
+    eq('pkgshello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+end)
+
 describe('insert mode', function()
   local screen
 
