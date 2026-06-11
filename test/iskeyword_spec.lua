@@ -44,17 +44,13 @@ describe('cword.util.iskeyword', function()
     eq(true, result.still_digit)
   end)
 
-  it('recompiles the regex when iskeyword is restored', function()
+  it('\\k resolves against the live iskeyword', function()
     local result = helpers.exec_lua(function()
       local ik = require('cword.util.iskeyword')
       local saved = vim.o.iskeyword
-      -- Trigger initial compile with the default iskeyword.
       local first = ik.is_keyword(string.byte('A'))
-      -- Switch to a restrictive setting: only digits.
       vim.o.iskeyword = '48-57'
       local digits_only = ik.is_keyword(string.byte('A'))
-      -- Restore the default.  The cached regex must be recompiled
-      -- so 'A' becomes keyword again.
       vim.o.iskeyword = saved
       local restored = ik.is_keyword(string.byte('A'))
       return { first = first, digits_only = digits_only, restored = restored }
