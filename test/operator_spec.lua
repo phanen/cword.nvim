@@ -1,5 +1,7 @@
 --- @diagnostic disable: undefined-global
--- E2E specs for operator-pending, insert, and command-line mode.
+-- E2E specs for operator-pending mode.
+-- Insert mode lives in test/insert_spec.lua.
+-- Command-line mode lives in test/cmdline_spec.lua.
 
 local helpers = require('test.cword_helpers')
 local Screen = require('nvim-test.screen')
@@ -471,86 +473,5 @@ describe('textobject iw/aw (icu_ffi backend)', function()
         return vim.o.virtualedit
       end)
     )
-  end)
-end)
-
-describe('insert mode', function()
-  local screen
-
-  before_each(function()
-    helpers.clear()
-    helpers.setup_path()
-    helpers.exec_lua(function()
-      local cword = require('cword')
-      cword.setup({ backend = 'icu_ffi' })
-      local opts = { noremap = true, silent = true }
-      vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
-      vim.keymap.set('i', '<m-b>', cword.insert_backward, opts)
-      vim.keymap.set('i', '<c-w>', cword.insert_delete_word, opts)
-    end)
-    screen = Screen.new(40, 6)
-    screen:attach()
-  end)
-
-  after_each(function()
-    if screen then
-      screen:detach()
-    end
-  end)
-
-  it('<c-w> deletes word backward', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 10 })
-    helpers.feed('a')
-    helpers.feed('<c-w>')
-    screen:expect({
-      grid = [[
-  hello ^                                  |
-  ~                                       |
-  ~                                       |
-  ~                                       |
-  ~                                       |
-  -- INSERT --                            |
-]],
-    })
-  end)
-
-  it('<m-f> moves forward one word', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('i')
-    helpers.feed('<m-f>')
-    screen:expect({
-      grid = [[
-  hello ^world                             |
-  ~                                       |
-  ~                                       |
-  ~                                       |
-  ~                                       |
-  -- INSERT --                            |
-]],
-    })
-  end)
-end)
-
-describe('command-line mode', function()
-  before_each(function()
-    helpers.clear()
-    helpers.setup_path()
-  end)
-
-  it('exposes cmdline_forward/backward/delete_word handlers', function()
-    local cword = helpers.exec_lua(function()
-      local m = require('cword')
-      m.setup()
-      return {
-        cf = type(m.cmdline_forward),
-        cb = type(m.cmdline_backward),
-        cd = type(m.cmdline_delete_word),
-      }
-    end)
-    eq('function', cword.cf)
-    eq('function', cword.cb)
-    eq('function', cword.cd)
   end)
 end)

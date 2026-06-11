@@ -407,7 +407,13 @@ local function insert_move(method, direction)
       -- backward: use cursor as-is (exclusive bound)
       target = method(_seg, line, cursor)
     end
-    vim.api.nvim_win_set_cursor(win, { row, math.max(0, target - 1) })
+    -- Defer the cursor move: calling nvim_win_set_cursor from
+    -- inside an i-mode mapping callback races the screen
+    -- redraw and the next screen:expect sees the old position.
+    local target_col = math.max(0, target - 1)
+    vim.schedule(function()
+      pcall(vim.api.nvim_win_set_cursor, win, { row, target_col })
+    end)
   end
 end
 
@@ -428,7 +434,35 @@ M.insert_delete_word = function()
   local line = vim.api.nvim_get_current_line()
   local target = M.motion.backward(_seg, line, cursor)
   if target < cursor then
-    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
+    -- Match Vim's built-in <c-w> in insert mode: eat the word
+    -- before the cursor plus any whitespace immediately after
+    -- it. Find the word at `target`, then extend through any
+    -- following whitespace run.
+    local toks = _seg:cut(line)
+    local eat_to = col0 -- 0-indexed exclusive end
+    local seen_word = false
+    for _, t in ipairs(toks) do
+      if t.byte_start >= target then
+        if not seen_word then
+          if not is_whitespace(t) then
+            seen_word = true
+          end
+        elseif is_whitespace(t) then
+          eat_to = t.byte_end
+        else
+          break
+        end
+      end
+    end
+    -- Defer the buffer mutation: nvim_buf_set_text is not
+    -- safe inside an i-mode <c-w> callback, the same way
+    -- op-pending needed vim.schedule. Use feedkeys to run the
+    -- actual edit through normal mode.
+    local eat_from = target - 1
+    local row1 = row - 1
+    vim.schedule(function()
+      vim.api.nvim_buf_set_text(0, row1, eat_from, row1, eat_to, { '' })
+    end)
   end
 end
 
