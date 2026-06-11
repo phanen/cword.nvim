@@ -13,7 +13,7 @@ describe('operator-pending mode', function()
     helpers.clear()
     helpers.setup_path()
     helpers.exec_lua(function()
-      require('cword').setup({ backend = 'cjk' })
+      require('cword').setup({ backend = 'icu_ffi' })
       local m = require('cword')
       local opts = { noremap = true, silent = true }
       vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
@@ -71,10 +71,12 @@ describe('operator-pending mode', function()
   end)
 
   it('cw replaces a CJK word with insert mode', function()
+    -- icu_ffi merges "你好" into one cjdict run, so cw eats the
+    -- whole run and leaves "我".
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好我' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('cw')
-    eq('好我', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    eq('我', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
     local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
     eq('i', mode:sub(1, 1))
   end)
@@ -86,11 +88,13 @@ describe('operator-pending mode', function()
     eq('foo baz', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
-  it('db deletes a CJK char', function()
+  it('db deletes the preceding CJK run', function()
+    -- icu_ffi merges "你好" into one run, so db from the start of
+    -- "我" eats the whole "你好" run and lands on "我".
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好我' })
     helpers.api.nvim_win_set_cursor(0, { 1, 6 })
     helpers.feed('db')
-    eq('你我', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    eq('我', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
   it('yw yanks word', function()
@@ -305,7 +309,7 @@ describe('insert mode', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local cword = require('cword')
-      cword.setup({ backend = 'cjk' })
+      cword.setup({ backend = 'icu_ffi' })
       local opts = { noremap = true, silent = true }
       vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
       vim.keymap.set('i', '<m-b>', cword.insert_backward, opts)

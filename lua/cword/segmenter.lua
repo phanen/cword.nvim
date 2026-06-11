@@ -9,15 +9,14 @@
 local M = {}
 
 local BACKENDS = {
-  cjk = 'cword.backends.cjk',
   icu_ffi = 'cword.backends.icu_ffi',
 }
 
----@param opts table? { backend = "cjk"|"icu"|"char" }
+---@param opts table? { backend = "icu_ffi" }
 ---@return table
 function M.new(opts)
   opts = opts or {}
-  local name = opts.backend or 'cjk'
+  local name = opts.backend or 'icu_ffi'
   local path = BACKENDS[name]
   if not path then
     local known = {}

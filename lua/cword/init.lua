@@ -26,10 +26,16 @@ end
 
 ---@return string
 local function default_backend()
+  -- The icu_ffi backend is mandatory: every supported platform
+  -- ships libicuuc and the LuaJIT FFI binding loads it eagerly
+  -- at require time. The pcall probe is only there so a clean
+  -- import does not hard-crash if libicuuc is somehow missing
+  -- (e.g. a test harness that fakes the FFI module).
   local ok = pcall(function()
     require('ffi').load('icuuc')
   end)
-  return ok and 'icu_ffi' or 'cjk'
+  assert(ok, 'cword: libicuuc is required but could not be loaded')
+  return 'icu_ffi'
 end
 
 ---@param opts? { backend?: string }

@@ -85,7 +85,7 @@ function M.end_backward(segmenter, line, cursor)
   cursor = clamp(line, cursor)
   local inside, prev
   for _, t in ipairs(segmenter:cut(line)) do
-    if t.byte_end < cursor then
+    if t.byte_start < cursor then
       prev = t
       if cursor <= t.byte_end then
         inside = t
