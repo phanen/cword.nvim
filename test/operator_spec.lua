@@ -100,6 +100,63 @@ describe('operator-pending mode', function()
     local reg = helpers.exec_lua('return vim.fn.getreg("0")')
     eq('hello ', reg)
   end)
+
+  it('dw wraps across newlines and keeps the next line intact', function()
+    -- The visual-mode-based implementation had an off-by-one on
+    -- cross-line wrap because nvim_win_set_cursor is "on the char"
+    -- while Vim's `v` is "between chars"; computing the range via
+    -- nvim_buf_set_text makes the wrap end at the start of the
+    -- next line, not on its first character.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('world', lines[1])
+  end)
+
+  it('dw wraps across an empty line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', '', 'next' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('next', lines[1])
+  end)
+
+  it('dw on a single-word last line deletes the whole line', function()
+    -- `dw` at end of input must still eat the trailing word; the
+    -- old visual-mode path deleted one byte too few because e_col
+    -- was clamped to c-2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('', lines[1])
+  end)
+
+  it('db wraps to previous line and removes the previous word', function()
+    -- cword's `b` wraps when the cursor is on a word boundary at
+    -- col 0, unlike stock vim. With byte_start anchoring, db from
+    -- the start of "world" eats the preceding "hello\n" so the
+    -- previous line disappears into the cursor line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 })
+    helpers.feed('db')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('world', lines[1])
+  end)
+
+  it('d3w across multiple lines lands on the third word', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo', 'bar', 'baz' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('d3w')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('baz', lines[1])
+  end)
 end)
 
 describe('insert mode', function()

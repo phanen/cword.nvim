@@ -132,6 +132,15 @@ M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
 -- so the cursor may sit one cell past the last byte of a line — this
 -- is what makes CJK end-of-line motion work) and then applies the
 -- operator. Pattern from 'mini.ai' (select_textobject).
+--
+-- Cross-line wrap is the tricky case. With virtualedit=onemore and
+-- `nvim_win_set_cursor`, the cursor at (line, 0) is "on the first
+-- char" of that line, so a visual range from (line1, 0) to (line2, 0)
+-- eats the first character of line2 ("hello\nworld" becomes "orld"
+-- after `dw`). The fix is to anchor the visual end on the *previous*
+-- line at its byte length: that position is past the last char of
+-- line1 (allowed by onemore) and the visual range then includes the
+-- trailing newline without grabbing line2.
 local function op_motion(method, direction)
   return function()
     if not _seg then
@@ -175,7 +184,7 @@ local function op_motion(method, direction)
           end
           for _, t in ipairs(_seg:cut(s)) do
             if not is_whitespace(t) then
-              r, c = nr, t.byte_end
+              r, c = nr, t.byte_start
               found = true
             end
           end
@@ -195,10 +204,28 @@ local function op_motion(method, direction)
     local e_row, e_col
     if direction == 'backward' then
       s_row, s_col = r - 1, c - 1
-      e_row, e_col = row - 1, col0 - 1
+      -- For cross-line backward, anchor the visual end on the
+      -- line where the motion landed (col = byte length) so the
+      -- visual range stops at the trailing newline without
+      -- grabbing the first char of the cursor's line.
+      if r < row then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        e_row, e_col = r - 1, #(lines[r] or '')
+      else
+        e_row, e_col = row - 1, math.max(0, col0 - 1)
+      end
     else
       s_row, s_col = row - 1, col0
-      e_row, e_col = r - 1, math.max(0, c - 2)
+      -- For cross-line forward we anchor the visual end on the
+      -- line *before* the wrap target (col = byte length) so the
+      -- visual range stops at the trailing newline instead of
+      -- including the first char of the next line.
+      if r > row then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        e_row, e_col = r - 2, #(lines[r - 1] or '')
+      else
+        e_row, e_col = r - 1, math.max(0, c - 2)
+      end
     end
     if s_row > e_row or (s_row == e_row and s_col > e_col) then
       s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
