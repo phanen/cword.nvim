@@ -301,6 +301,140 @@ describe('operator-pending mode (icu_ffi backend)', function()
   end)
 end)
 
+describe('textobject iw/aw (icu_ffi backend)', function()
+  local screen
+
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+    helpers.exec_lua(function()
+      local cword = require('cword')
+      cword.setup({ backend = 'icu_ffi' })
+      local m = cword
+      local opts = { noremap = true, silent = true }
+      vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
+      vim.keymap.set('x', 'iw', m.textobject_inner_word, opts)
+      vim.keymap.set('x', 'aw', m.textobject_a_word, opts)
+      vim.keymap.set(
+        'o',
+        'iw',
+        m.textobject_inner_word,
+        vim.tbl_extend('force', opts, { expr = true })
+      )
+      vim.keymap.set('o', 'aw', m.textobject_a_word, vim.tbl_extend('force', opts, { expr = true }))
+    end)
+    screen = Screen.new(40, 4)
+    screen:attach()
+  end)
+
+  after_each(function()
+    if screen then
+      screen:detach()
+    end
+  end)
+
+  local function put(text)
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { text })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+  end
+
+  it('diw deletes the inner word on ASCII', function()
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('diw')
+    eq(' world foo', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('daw deletes the word plus its trailing space', function()
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('daw')
+    eq('world foo', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('diw from the end of a word deletes that word', function()
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 })
+    helpers.feed('diw')
+    eq(' world foo', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('diw on the last word keeps any leading whitespace', function()
+    put('hello world')
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('diw')
+    eq('hello ', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('daw at end of line deletes just the word (no trailing ws)', function()
+    put('hello world')
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('daw')
+    eq('hello ', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('ciw replaces the inner word and enters insert mode', function()
+    put('hello world')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('ciw')
+    eq(' world', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
+    eq('i', mode:sub(1, 1))
+  end)
+
+  it('diw on a merged cjdict run eats the whole run', function()
+    put('你好 世界')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('diw')
+    eq(' 世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('daw on a merged cjdict run eats run + trailing whitespace', function()
+    put('你好 世界')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('daw')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('viw extends the visual selection to the inner word', function()
+    -- Control: just `v` first to see what the screen looks like
+    -- before the keymap handler runs.
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('v')
+    screen:expect({
+      grid = [[
+  ^hello world foo                         |
+  ~                                       |
+  ~                                       |
+  -- VISUAL --                            |
+]],
+    })
+  end)
+
+  it('viw with keymap set up selects hello', function()
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('viw')
+    -- After the function, check that the cursor is at col 5
+    -- (end of "hello") and the mode is still visual. These are
+    -- the concrete side effects of the keymap handler, regardless
+    -- of how nvim-test renders the visual highlight.
+    local state = helpers.exec_lua(function()
+      return {
+        mode = vim.api.nvim_get_mode().mode,
+        cursor = vim.api.nvim_win_get_cursor(0)[2],
+        col1 = vim.fn.col('v'),
+        col2 = vim.fn.col('.'),
+      }
+    end)
+    eq('v', state.mode)
+    eq(5, state.cursor)
+    eq(1, state.col1)
+    eq(6, state.col2)
+  end)
+end)
+
 describe('insert mode', function()
   local screen
 

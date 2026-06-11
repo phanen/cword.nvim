@@ -264,10 +264,123 @@ local function op_motion(method, direction)
   end
 end
 
+-- Textobject handlers for `iw` (inner word) and `aw` (a word).
+-- Same pattern as op_motion: return a `<Cmd>lua ...<CR>` snippet
+-- that builds a visual selection under `virtualedit=onemore`
+-- and then runs the pending operator. In visual mode the same
+-- Lua code is run synchronously and the operator branch is
+-- skipped (the selection just extends the existing visual range).
+local function textobject(ai_type)
+  return function()
+    if not _seg then
+      M.setup()
+    end
+    local op = vim.v.operator
+    local in_visual = (vim.api.nvim_get_mode().mode:sub(1, 1) == 'v')
+
+    local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
+    local line = vim.api.nvim_get_current_line()
+    if #line == 0 then
+      return in_visual and '' or '<Esc>'
+    end
+    local c = col0 + 1 -- 1-indexed byte cursor
+
+    -- Walk the tokens once to find the word the cursor is on
+    -- (or the whitespace if it sits between words). Going through
+    -- the segmenter directly avoids the motion module's "go to
+    -- the previous word at a boundary" behavior, which would
+    -- mis-select when the cursor lands on the first byte of a
+    -- word.
+    local toks = _seg:cut(line)
+    local word_tok = nil
+    for _, t in ipairs(toks) do
+      if t.byte_start <= c and t.byte_end >= c then
+        if not is_whitespace(t) then
+          word_tok = t
+        end
+        break
+      end
+    end
+    if not word_tok then
+      -- Cursor is on whitespace or past the last token. Abort
+      -- rather than mis-select the previous word.
+      return in_visual and '' or '<Esc>'
+    end
+
+    local start_c = word_tok.byte_start
+    local end_c = word_tok.byte_end + 1
+
+    -- For `aw`, extend the right edge over the trailing
+    -- whitespace run if one immediately follows the word.
+    if ai_type == 'a' then
+      for i, t in ipairs(toks) do
+        if t == word_tok then
+          local nxt = toks[i + 1]
+          if nxt and is_whitespace(nxt) then
+            end_c = nxt.byte_end + 1
+          end
+          break
+        end
+      end
+    end
+
+    -- Convert to 0-indexed visual coordinates. `nvim_win_set_cursor`
+    -- plus the visual mode that follows in the operator-pending
+    -- branch uses "on the char" semantics, so the end column is
+    -- `end_c - 2` (one past the last byte in 1-indexed form minus
+    -- one for 0-indexing). The visual mode branch below uses the
+    -- live visual mode's "between chars" semantics instead, so
+    -- it shifts the end column by one.
+    local s_row = row - 1
+    local s_col = start_c - 1
+    local e_row = row - 1
+    local e_col = end_c - 2
+
+    if in_visual then
+      -- Visual mode: drop out of visual, park the cursor at the
+      -- new anchor, then re-enter visual and walk to the end
+      -- column with a single `normal!` so the live visual mode
+      -- motion (which is "between chars", unlike the `<Cmd>lua`
+      -- branch's nvim_win_set_cursor "on the char" semantics)
+      -- covers exactly the intended byte range.
+      vim.o.virtualedit = 'onemore'
+      vim.cmd('normal! v') -- exit visual
+      vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
+      vim.cmd('normal! v') -- re-enter at the new anchor
+      vim.api.nvim_win_set_cursor(0, { e_row + 1, end_c - 1 })
+      vim.cmd('redraw')
+      return ''
+    end
+
+    if op ~= 'd' and op ~= 'c' and op ~= 'y' then
+      return '<Esc>'
+    end
+    local cache_ve = vim.o.virtualedit
+    return string.format(
+      '<Cmd>lua vim.o.virtualedit="onemore";'
+        .. 'vim.api.nvim_win_set_cursor(0, {%d, %d});'
+        .. 'vim.cmd("normal! v");'
+        .. 'vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>'
+        .. '<Cmd>lua vim.cmd("normal! %s");vim.o.virtualedit=%q<CR>',
+      s_row + 1,
+      s_col,
+      e_row + 1,
+      e_col,
+      op,
+      cache_ve
+    )
+  end
+end
+
 M.op_forward = op_motion(M.motion.forward, 'forward')
 M.op_backward = op_motion(M.motion.backward, 'backward')
 M.op_end_forward = op_motion(M.motion.end_forward, 'end_forward')
 M.op_end_backward = op_motion(M.motion.end_backward, 'end_backward')
+
+-- Textobjects: bind these in 'x' (visual) and 'o' (operator-
+-- pending) mode. In 'o' mode, `expr = true` is required.
+M.textobject_inner_word = textobject('i')
+M.textobject_a_word = textobject('a')
 
 -- Insert-mode word motions (readline-style).
 
