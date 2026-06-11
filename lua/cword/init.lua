@@ -191,8 +191,15 @@ local function op_motion(method, direction)
     if r == row and c - 1 == col0 then
       return '<Esc>'
     end
-    local s_row, s_col = row - 1, col0
-    local e_row, e_col = r - 1, math.max(0, c - 2)
+    local s_row, s_col
+    local e_row, e_col
+    if direction == 'backward' then
+      s_row, s_col = r - 1, c - 1
+      e_row, e_col = row - 1, col0 - 1
+    else
+      s_row, s_col = row - 1, col0
+      e_row, e_col = r - 1, math.max(0, c - 2)
+    end
     if s_row > e_row or (s_row == e_row and s_col > e_col) then
       s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
     end
