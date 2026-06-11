@@ -423,7 +423,9 @@ M.insert_end_forward = insert_move(M.motion.end_forward, 'end_forward')
 M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
 
 -- Insert-mode delete word backward (<c-w>).
-
+-- Returns a `<Cmd>lua` string that does the delete
+-- synchronously (so an undo point is created) and yanks the
+-- deleted text into the `-` register (small delete).
 M.insert_delete_word = function()
   if not _seg then
     M.setup()
@@ -432,38 +434,63 @@ M.insert_delete_word = function()
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
   local cursor = col0 + 1
   local line = vim.api.nvim_get_current_line()
+
+  -- Empty line at col 0: delete the newline, joining with the
+  -- previous line (matching Vim's built-in <c-w>).  The
+  -- cursor lands at the end of the previous line.
+  if #line == 0 and col0 == 0 and row > 1 then
+    local prev_len = #(vim.api.nvim_buf_get_lines(0, row - 2, row - 1, false)[1] or '')
+    return string.format(
+      '<Cmd>lua vim.api.nvim_buf_set_lines(0, %d, %d, false, {});'
+        .. 'vim.api.nvim_win_set_cursor(0, {%d, %d});'
+        .. 'vim.cmd("startinsert")<CR>',
+      row - 1,
+      row,
+      row - 1,
+      prev_len
+    )
+  end
+
   local target = M.motion.backward(_seg, line, cursor)
-  if target < cursor then
-    -- Match Vim's built-in <c-w> in insert mode: eat the word
-    -- before the cursor plus any whitespace immediately after
-    -- it. Find the word at `target`, then extend through any
-    -- following whitespace run.
-    local toks = _seg:cut(line)
-    local eat_to = col0 -- 0-indexed exclusive end
-    local seen_word = false
-    for _, t in ipairs(toks) do
-      if t.byte_start >= target then
-        if not seen_word then
-          if not is_whitespace(t) then
-            seen_word = true
-          end
-        elseif is_whitespace(t) then
-          eat_to = t.byte_end
-        else
-          break
+  if target >= cursor then
+    return ''
+  end
+
+  -- Eat the word before cursor plus any following whitespace.
+  local toks = _seg:cut(line)
+  local eat_to = col0 -- 0-indexed exclusive end
+  local seen_word = false
+  for _, t in ipairs(toks) do
+    if t.byte_start >= target then
+      if not seen_word then
+        if not is_whitespace(t) then
+          seen_word = true
         end
+      elseif is_whitespace(t) then
+        eat_to = t.byte_end
+      else
+        break
       end
     end
-    -- Defer the buffer mutation: nvim_buf_set_text is not
-    -- safe inside an i-mode <c-w> callback, the same way
-    -- op-pending needed vim.schedule. Use feedkeys to run the
-    -- actual edit through normal mode.
-    local eat_from = target - 1
-    local row1 = row - 1
-    vim.schedule(function()
-      vim.api.nvim_buf_set_text(0, row1, eat_from, row1, eat_to, { '' })
-    end)
   end
+  local eat_from = target - 1
+  local row1 = row - 1
+  -- Yank into the small-delete register, then delete from
+  -- normal mode via <Cmd>lua so an undo point is created.
+  return string.format(
+    '<Cmd>lua '
+      .. 'vim.fn.setreg("-", (vim.api.nvim_buf_get_text(0, %d, %d, %d, %d, {})[1] or ""));'
+      .. 'vim.api.nvim_buf_set_text(0, %d, %d, %d, %d, {""});'
+      .. 'vim.cmd("startinsert")<CR>',
+    row1,
+    eat_from,
+    row1,
+    eat_to,
+    row1,
+    eat_from,
+    row1,
+    eat_to
+  )
 end
 
 -- Command-line mode word motions.

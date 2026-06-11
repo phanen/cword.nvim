@@ -132,4 +132,30 @@ describe('insert mode', function()
     end)
     eq(6, state.cursor)
   end)
+
+  it('<c-w> on an empty line joins with the previous line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', '' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 })
+    helpers.feed('a')
+    helpers.feed('<c-w>')
+    screen:expect({
+      grid = [[
+  hello world^                             |
+  ~                                       |
+  ~                                       |
+  ~                                       |
+  ~                                       |
+  -- INSERT --                            |
+]],
+    })
+  end)
+
+  it('<c-w> yanks the deleted word into the small-delete register', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- between "hello" and " world"
+    helpers.feed('a')
+    helpers.feed('<c-w>')
+    local reg = helpers.exec_lua('return vim.fn.getreg("-")')
+    eq('hello ', reg)
+  end)
 end)
