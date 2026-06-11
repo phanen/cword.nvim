@@ -248,6 +248,20 @@ describe('motion e2e (icu_ffi backend)', function()
     })
   end)
 
+  it('w from the last word on a line wraps to the first word on the next line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello --world', 'next here' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 8 }) -- on "world"
+    helpers.feed('w')
+    screen:expect({
+      grid = [[
+  hello --world                           |
+  ^next here                               |
+  ~                                       |
+                                          |
+]],
+    })
+  end)
+
   it('w stops at the start of an empty line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', '', 'next' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
