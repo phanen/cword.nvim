@@ -11,8 +11,6 @@
 
 local M = {}
 
-local DEFAULT = '@,48-57,_,192-255'
-
 ---@param opt string  vim.o.iskeyword value (e.g. "@,48-57,_,192-255")
 ---@return table
 function M.parse(opt)
@@ -41,10 +39,7 @@ end
 ---reflected on the next call.
 ---@return string
 function M.current_opt()
-  if vim and vim.o and vim.o.iskeyword ~= nil then
-    return vim.o.iskeyword
-  end
-  return DEFAULT
+  return vim.o.iskeyword
 end
 
 local cache_opt = nil
