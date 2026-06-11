@@ -1,12 +1,14 @@
 # cword.nvim
 
-CJK-aware word motion for Neovim. `w` jumps one CJK character at a time
-instead of skipping an entire sentence.
+CJK-aware word motion for Neovim. `w` lands on cjdict-merged CJK runs
+(`你好` is one word, `hello` is one word) so `daw`, `viw`, etc. work the
+same way they do on Latin identifiers.
 
 ## Dependencies
 
 - Neovim >= 0.10
-- `icu_ffi` backend: `libicuuc` (optional, auto-detected)
+- `libicuuc` (the icu_ffi backend is mandatory; every supported
+  platform ships it and the LuaJIT FFI binding loads it eagerly)
 
 ## Install
 
@@ -14,7 +16,7 @@ instead of skipping an entire sentence.
 {
   'phanen/cword.nvim',
   lazy = true,
-  keys = { 'w', 'b', 'e', 'ge', '<m-f>', '<m-b>', '<c-w>' },
+  keys = { 'w', 'b', 'e', 'ge', 'iw', 'aw', '<m-f>', '<m-b>', '<c-w>' },
   config = function()
     local cword = require('cword')
     local opts = { noremap = true, silent = true }
@@ -24,6 +26,15 @@ instead of skipping an entire sentence.
     vim.keymap.set({ 'n', 'x' }, 'b',  cword.move_backward, opts)
     vim.keymap.set({ 'n', 'x' }, 'e',  cword.move_end_forward, opts)
     vim.keymap.set({ 'n', 'x' }, 'ge', cword.move_end_backward, opts)
+
+    -- Textobjects. Bind in 'x' (visual) and 'o' (operator-pending)
+    -- mode; in 'o' mode `expr = true` is required. The same
+    -- handler runs in visual mode to extend the selection and in
+    -- operator-pending mode to set up the range for d/c/y.
+    vim.keymap.set('x', 'iw', cword.textobject_inner_word, opts)
+    vim.keymap.set('x', 'aw', cword.textobject_a_word, opts)
+    vim.keymap.set('o', 'iw', cword.textobject_inner_word, vim.tbl_extend('force', opts, { expr = true }))
+    vim.keymap.set('o', 'aw', cword.textobject_a_word, vim.tbl_extend('force', opts, { expr = true }))
 
     -- Operator-pending (d/c/y + motion). `expr = true` is required:
     -- the handler returns a `<Cmd>lua ...<CR>` string that aborts the
@@ -53,7 +64,7 @@ instead of skipping an entire sentence.
 
 | Function                     | Description |
 | ---------------------------- | ----------- |
-| `require('cword').setup(opts?)` | Init segmenter (optional, auto-called on first use). `opts.backend` = `"cjk"` or `"icu_ffi"`. |
+| `require('cword').setup(opts?)` | Init segmenter (optional, auto-called on first use). `opts.backend` = `"icu_ffi"`. |
 | `cword.move_forward`         | `w` handler. Supports count, wraps, visual mode. |
 | `cword.move_backward`        | `b` handler. |
 | `cword.move_end_forward`     | `e` handler. |
@@ -62,6 +73,8 @@ instead of skipping an entire sentence.
 | `cword.op_backward`         | Operator-pending `b`. |
 | `cword.op_end_forward`      | Operator-pending `e`. |
 | `cword.op_end_backward`     | Operator-pending `ge`. |
+| `cword.textobject_inner_word` | `iw` handler. Bind in `'x'` and `'o'` (with `expr = true`) mode. |
+| `cword.textobject_a_word`    | `aw` handler. Bind in `'x'` and `'o'` (with `expr = true`) mode. |
 | `cword.insert_forward`       | Insert-mode `<m-f>` / `<alt-f>`. Move cursor forward one word. |
 | `cword.insert_backward`      | Insert-mode `<m-b>` / `<alt-b>`. Move cursor backward one word. |
 | `cword.insert_delete_word`   | Insert-mode `<c-w>`. Delete word backward. |
@@ -73,10 +86,9 @@ instead of skipping an entire sentence.
 
 ### Backends
 
-| Backend   | `你好世界` | Notes |
-| --------- | ---------- | ----- |
-| `icu_ffi` | `你好`, `世界` | Real ICU via FFI, matches `Intl.Segmenter`. Default when libicuuc present. |
-| `cjk`     | `你`, `好`, `世`, `界` | Pure Lua. Each CJK code point is one word. |
+| Backend   | `你好世界`        | Notes |
+| --------- | ----------------- | ----- |
+| `icu_ffi` | `你好`, `世界`     | Real ICU via FFI. Merges CJK runs via cjdict; treats Latin with ICU's word rules. Mandatory. |
 
 ## Similar
 
