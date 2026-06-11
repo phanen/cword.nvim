@@ -1,12 +1,21 @@
 -- Parse vim.o.iskeyword into a set of codepoint rules and provide
--- a predicate. Cached per module load (iskeyword rarely changes at
--- runtime).
+-- a predicate. The rules are parsed lazily and cached by the
+-- raw `vim.o.iskeyword` string, so flipping the option at
+-- runtime (e.g. from a filetype plugin) is picked up on the
+-- next call without a separate reload hook.
+--
+-- Nothing in this module runs at load time: callers reach
+-- `is_keyword` which resolves the current option. That keeps
+-- the test harness from triggering a parse with whatever
+-- `vim.o.iskeyword` happens to be set in the runner.
 
 local M = {}
 
+local DEFAULT = '@,48-57,_,192-255'
+
 ---@param opt string  vim.o.iskeyword value (e.g. "@,48-57,_,192-255")
 ---@return table
-local function parse(opt)
+function M.parse(opt)
   local rules = {}
   for part in (opt or ''):gmatch('[^,]+') do
     part = part:gsub('^%s+', ''):gsub('%s+$', '')
@@ -16,8 +25,8 @@ local function parse(opt)
       local lo, hi = part:match('^(%d+)-(%d+)$')
       rules[#rules + 1] = { kind = 'range', lo = tonumber(lo), hi = tonumber(hi) }
     elseif #part > 0 then
-      -- Vim's iskeyword can hold multi-byte literal chars per comma
-      -- segment. Each byte in the segment is a codepoint.
+      -- Vim's iskeyword can hold multi-byte literal chars per
+      -- comma segment. Each byte in the segment is a codepoint.
       for i = 1, #part do
         rules[#rules + 1] = { kind = 'range', lo = string.byte(part, i), hi = string.byte(part, i) }
       end
@@ -26,23 +35,35 @@ local function parse(opt)
   return rules
 end
 
----The parsed iskeyword rules, frozen at module init. iskeyword rarely
----changes; call M.reload() if you mutate it at runtime.
-M.rules = vim and vim.o and parse(vim.o.iskeyword) or parse('@,48-57,_,192-255')
-
----Parse vim.o.iskeyword again. Call after the user toggles iskeyword.
-function M.reload()
-  if vim and vim.o then
-    M.rules = parse(vim.o.iskeyword)
-  else
-    M.rules = parse('@,48-57,_,192-255')
+---Resolve the live vim.o.iskeyword, falling back to a sane
+---default when no Neovim is around. The result is cached by the
+---raw option string so a filetype that changes iskeyword is
+---reflected on the next call.
+---@return string
+function M.current_opt()
+  if vim and vim.o and vim.o.iskeyword ~= nil then
+    return vim.o.iskeyword
   end
+  return DEFAULT
+end
+
+local cache_opt = nil
+local cache_rules = nil
+
+---@return table
+function M.current_rules()
+  local opt = M.current_opt()
+  if opt ~= cache_opt then
+    cache_opt = opt
+    cache_rules = M.parse(opt)
+  end
+  return cache_rules
 end
 
 ---@param cp integer
 ---@return boolean
 function M.is_keyword(cp)
-  for _, r in ipairs(M.rules) do
+  for _, r in ipairs(M.current_rules()) do
     if r.kind == 'alpha' then
       if cp >= 0x41 and cp <= 0x5A then
         return true
