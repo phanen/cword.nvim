@@ -86,7 +86,6 @@ local function cursor_move(method, direction)
           end
         end
         if not found then
-          c = #line
           break
         end
       elseif is_bwd and c <= 1 and col0 == 0 then
@@ -112,7 +111,6 @@ local function cursor_move(method, direction)
           end
         end
         if not found then
-          c = 1
           break
         end
       end
@@ -126,6 +124,110 @@ M.move_forward = cursor_move(M.motion.forward, 'forward')
 M.move_backward = cursor_move(M.motion.backward, 'backward')
 M.move_end_forward = cursor_move(M.motion.end_forward, 'end_forward')
 M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
+
+-- Operator-pending motion handlers. Registered in 'o' mode with
+-- `expr = true`; the returned `<Cmd>lua ...<CR>` string aborts the
+-- pending operator and switches to normal-mode for the Lua snippet.
+-- The Lua snippet builds a visual selection (`virtualedit=onemore`
+-- so the cursor may sit one cell past the last byte of a line — this
+-- is what makes CJK end-of-line motion work) and then applies the
+-- operator. Pattern from 'mini.ai' (select_textobject).
+local function op_motion(method, direction)
+  return function()
+    if not _seg then
+      M.setup()
+    end
+    local count = math.max(1, vim.v.count1)
+    local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
+    local r, c = row, col0 + 1
+    for _ = 1, count do
+      local line = vim.api.nvim_get_current_line()
+      c = method(_seg, line, c)
+      if direction == 'forward' and c >= #line then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r + 1, #lines do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          for _, t in ipairs(_seg:cut(s)) do
+            if not is_whitespace(t) then
+              r, c = nr, t.byte_start
+              found = true
+              break
+            end
+          end
+          if found then
+            break
+          end
+        end
+        if not found then
+          break
+        end
+      elseif direction == 'backward' and c <= 1 and col0 == 0 then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r - 1, 1, -1 do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          for _, t in ipairs(_seg:cut(s)) do
+            if not is_whitespace(t) then
+              r, c = nr, t.byte_end
+              found = true
+            end
+          end
+          if found then
+            break
+          end
+        end
+        if not found then
+          break
+        end
+      end
+    end
+    if r == row and c - 1 == col0 then
+      return '<Esc>'
+    end
+    local s_row, s_col = row - 1, col0
+    local e_row, e_col = r - 1, math.max(0, c - 2)
+    if s_row > e_row or (s_row == e_row and s_col > e_col) then
+      s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
+    end
+    local op = vim.v.operator
+    local cmd
+    if op == 'd' then
+      cmd = 'd'
+    elseif op == 'c' then
+      cmd = 'c'
+    elseif op == 'y' then
+      cmd = 'y'
+    else
+      return '<Esc>'
+    end
+    local cache_ve = vim.o.virtualedit
+    return string.format(
+      '<Cmd>lua vim.o.virtualedit="onemore";'
+        .. 'vim.api.nvim_win_set_cursor(0, {%d, %d});'
+        .. 'vim.cmd("normal! v");'
+        .. 'vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>'
+        .. '<Cmd>lua vim.cmd("normal! %s");vim.o.virtualedit=%q<CR>',
+      s_row + 1,
+      s_col,
+      e_row + 1,
+      e_col,
+      cmd,
+      cache_ve
+    )
+  end
+end
+
+M.op_forward = op_motion(M.motion.forward, 'forward')
+M.op_backward = op_motion(M.motion.backward, 'backward')
+M.op_end_forward = op_motion(M.motion.end_forward, 'end_forward')
+M.op_end_backward = op_motion(M.motion.end_backward, 'end_backward')
 
 -- Insert-mode word motions (readline-style).
 
@@ -210,71 +312,6 @@ M.cmdline_delete_word = function()
     vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos))
     vim.fn.setcmdpos(target)
   end
-end
-
--- Direct operator replacements (dw/cw/de/ce/db/cb). Bypass
--- operator-pending mode and Neovim's cursor-API clamping by
--- using nvim_buf_set_text with the motion's 1-indexed target.
-local function op_range(method)
-  if not _seg then
-    M.setup()
-  end
-  local win = vim.api.nvim_get_current_win()
-  local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
-  local line = vim.api.nvim_get_current_line()
-  local target = method(_seg, line, col0 + 1)
-  return row, col0, target
-end
-
--- Forward: target is 1-idx next-word-start or #line+1.
--- end_col = target - 1 is the 0-idx exclusive end.
-
-M.delete_forward = function()
-  local row, col0, target = op_range(M.motion.forward)
-  if target - 1 > col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
-  end
-end
-
-M.delete_end_forward = function()
-  local row, col0, target = op_range(M.motion.end_forward)
-  if target - 1 > col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
-  end
-end
-
-M.change_forward = function()
-  local row, col0, target = op_range(M.motion.forward)
-  if target - 1 > col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
-  end
-  vim.cmd('startinsert')
-end
-
-M.change_end_forward = function()
-  local row, col0, target = op_range(M.motion.end_forward)
-  if target - 1 > col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, col0, row - 1, target - 1, { '' })
-  end
-  vim.cmd('startinsert')
-end
-
--- Backward: target (byte_start) = 1-idx of previous word.
--- Delete from target-1 (beginning of the word) to col0 (cursor).
-
-M.delete_backward = function()
-  local row, col0, target = op_range(M.motion.backward)
-  if target <= col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
-  end
-end
-
-M.change_backward = function()
-  local row, col0, target = op_range(M.motion.backward)
-  if target <= col0 then
-    vim.api.nvim_buf_set_text(0, row - 1, target - 1, row - 1, col0, { '' })
-  end
-  vim.cmd('startinsert')
 end
 
 -- Exposed for spec probing.

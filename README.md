@@ -25,13 +25,16 @@ instead of skipping an entire sentence.
     vim.keymap.set({ 'n', 'x' }, 'e',  cword.move_end_forward, opts)
     vim.keymap.set({ 'n', 'x' }, 'ge', cword.move_end_backward, opts)
 
-    -- Direct operators (dw/cw/de/ce/db/cb)
-    vim.keymap.set('n', 'dw', cword.delete_forward, opts)
-    vim.keymap.set('n', 'cw', cword.change_forward, opts)
-    vim.keymap.set('n', 'de', cword.delete_end_forward, opts)
-    vim.keymap.set('n', 'ce', cword.change_end_forward, opts)
-    vim.keymap.set('n', 'db', cword.delete_backward, opts)
-    vim.keymap.set('n', 'cb', cword.change_backward, opts)
+    -- Operator-pending (d/c/y + motion). `expr = true` is required:
+    -- the handler returns a `<Cmd>lua ...<CR>` string that aborts the
+    -- pending operator and runs the actual delete/change/yank in
+    -- normal mode with `virtualedit=onemore` (so the cursor can sit
+    -- one cell past the last byte — this is what makes CJK
+    -- end-of-line motion exact).
+    vim.keymap.set('o', 'w',  cword.op_forward,       vim.tbl_extend('force', opts, { expr = true }))
+    vim.keymap.set('o', 'b',  cword.op_backward,      vim.tbl_extend('force', opts, { expr = true }))
+    vim.keymap.set('o', 'e',  cword.op_end_forward,  vim.tbl_extend('force', opts, { expr = true }))
+    vim.keymap.set('o', 'ge', cword.op_end_backward, vim.tbl_extend('force', opts, { expr = true }))
 
     -- Insert mode
     vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
@@ -55,12 +58,10 @@ instead of skipping an entire sentence.
 | `cword.move_backward`        | `b` handler. |
 | `cword.move_end_forward`     | `e` handler. |
 | `cword.move_end_backward`    | `ge` handler. |
-| `cword.delete_forward`       | `dw`: delete to next word (direct buffer op, no operator-pending). |
-| `cword.change_forward`       | `cw`: change to next word. |
-| `cword.delete_end_forward`   | `de`: delete to end of word. |
-| `cword.change_end_forward`   | `ce`: change to end of word. |
-| `cword.delete_backward`      | `db`: delete to previous word. |
-| `cword.change_backward`      | `cb`: change to previous word. |
+| `cword.op_forward`          | Operator-pending `w` (use in `'o'` mode with `expr = true`). Pairs with `d`/`c`/`y`. |
+| `cword.op_backward`         | Operator-pending `b`. |
+| `cword.op_end_forward`      | Operator-pending `e`. |
+| `cword.op_end_backward`     | Operator-pending `ge`. |
 | `cword.insert_forward`       | Insert-mode `<m-f>` / `<alt-f>`. Move cursor forward one word. |
 | `cword.insert_backward`      | Insert-mode `<m-b>` / `<alt-b>`. Move cursor backward one word. |
 | `cword.insert_delete_word`   | Insert-mode `<c-w>`. Delete word backward. |
