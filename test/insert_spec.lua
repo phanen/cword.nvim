@@ -17,23 +17,12 @@ describe('insert mode', function()
       local cword = require('cword')
       cword.setup({ backend = 'icu_ffi' })
       local opts = { noremap = true, silent = true }
-      -- expr = true: the handler's side effects (moving the
-      -- cursor via nvim_win_set_cursor / nvim_buf_set_text) are
-      -- the only thing that should happen. Without expr, the
-      -- typed key still runs the default insert-mode binding on
-      -- top of our work, which double-deletes for <c-w>.
-      vim.keymap.set(
-        'i',
-        '<m-f>',
-        cword.insert_forward,
-        vim.tbl_extend('force', opts, { expr = true })
-      )
-      vim.keymap.set(
-        'i',
-        '<m-b>',
-        cword.insert_backward,
-        vim.tbl_extend('force', opts, { expr = true })
-      )
+      -- <c-w> needs expr = true so the built-in word-delete
+      -- doesn't run on top of our handler.
+      -- <m-f>/<m-b> have no default binding in insert mode,
+      -- so expr is unnecessary there.
+      vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
+      vim.keymap.set('i', '<m-b>', cword.insert_backward, opts)
       vim.keymap.set(
         'i',
         '<c-w>',
