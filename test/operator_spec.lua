@@ -433,6 +433,45 @@ describe('textobject iw/aw (icu_ffi backend)', function()
     eq(1, state.col1)
     eq(6, state.col2)
   end)
+
+  it('vaw extends to the word plus its trailing space', function()
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('vaw')
+    local state = helpers.exec_lua(function()
+      return {
+        mode = vim.api.nvim_get_mode().mode,
+        cursor = vim.api.nvim_win_get_cursor(0)[2],
+        col1 = vim.fn.col('v'),
+        col2 = vim.fn.col('.'),
+      }
+    end)
+    eq('v', state.mode)
+    eq(6, state.cursor)
+    eq(1, state.col1)
+    eq(7, state.col2)
+  end)
+
+  it('virtualedit is restored after viw', function()
+    local saved = helpers.exec_lua(function()
+      return vim.o.virtualedit
+    end)
+    put('hello world foo')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('viw')
+    -- schedule runs in the next tick; wait for it then check.
+    helpers.exec_lua(function()
+      vim.wait(50, function()
+        return vim.o.virtualedit == saved
+      end)
+    end)
+    eq(
+      saved,
+      helpers.exec_lua(function()
+        return vim.o.virtualedit
+      end)
+    )
+  end)
 end)
 
 describe('insert mode', function()

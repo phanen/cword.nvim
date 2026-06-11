@@ -343,12 +343,16 @@ local function textobject(ai_type)
       -- motion (which is "between chars", unlike the `<Cmd>lua`
       -- branch's nvim_win_set_cursor "on the char" semantics)
       -- covers exactly the intended byte range.
+      local cache_ve = vim.o.virtualedit
       vim.o.virtualedit = 'onemore'
       vim.cmd('normal! v') -- exit visual
       vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
       vim.cmd('normal! v') -- re-enter at the new anchor
       vim.api.nvim_win_set_cursor(0, { e_row + 1, end_c - 1 })
       vim.cmd('redraw')
+      vim.schedule(function()
+        vim.o.virtualedit = cache_ve
+      end)
       return ''
     end
 
