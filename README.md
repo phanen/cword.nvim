@@ -6,7 +6,7 @@ same way they do on Latin identifiers.
 
 ## Dependencies
 
-- Neovim >= 0.10
+- Neovim >= 0.11
 - `libicuuc` (the icu_ffi backend is mandatory; every supported
   platform ships it and the LuaJIT FFI binding loads it eagerly)
 
