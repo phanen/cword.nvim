@@ -438,17 +438,15 @@ M.insert_delete_word = function()
     local prev_len = #(vim.api.nvim_buf_get_lines(0, row - 2, row - 1, false)[1] or '')
     local start_r, end_r = row - 1, row
     vim.fn.setreg('-', '\n')
-    vim.schedule(function()
-      vim.o.undolevels = vim.o.undolevels
-      vim.api.nvim_buf_set_lines(0, start_r, end_r, false, {})
-      pcall(vim.api.nvim_win_set_cursor, 0, { row - 1, prev_len })
-    end)
-    return ''
+    vim.o.undolevels = vim.o.undolevels
+    vim.api.nvim_buf_set_lines(0, start_r, end_r, false, {})
+    pcall(vim.api.nvim_win_set_cursor, 0, { row - 1, prev_len })
+    return
   end
 
   local target = M.motion.backward(_seg, line, cursor)
   if target >= cursor then
-    return ''
+    return
   end
 
   -- Eat the word before cursor plus any following whitespace.
@@ -473,11 +471,9 @@ M.insert_delete_word = function()
   -- Yank into the small-delete register now, then schedule
   -- the buffer mutation with an undo breakpoint.
   vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, eat_from, row1, eat_to, {})[1] or ''))
-  vim.schedule(function()
-    vim.o.undolevels = vim.o.undolevels
-    vim.api.nvim_buf_set_text(0, row1, eat_from, row1, eat_to, { '' })
-  end)
-  return ''
+  vim.o.undolevels = vim.o.undolevels
+  vim.api.nvim_buf_set_text(0, row1, eat_from, row1, eat_to, { '' })
+  return
 end
 
 -- Command-line mode word motions.
