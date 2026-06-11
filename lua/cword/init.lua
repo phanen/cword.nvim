@@ -476,7 +476,7 @@ M.cmdline_forward = function()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.forward(_seg, line, pos)
   if target > pos then
-    vim.fn.setcmdpos(target)
+    vim.fn.setcmdline(line, target)
   end
 end
 
@@ -488,7 +488,7 @@ M.cmdline_backward = function()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.backward(_seg, line, pos)
   if target < pos then
-    vim.fn.setcmdpos(target)
+    vim.fn.setcmdline(line, target)
   end
 end
 
@@ -500,8 +500,7 @@ M.cmdline_delete_word = function()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.backward(_seg, line, pos)
   if target < pos then
-    vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos))
-    vim.fn.setcmdpos(target)
+    vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos), target)
   end
 end
 

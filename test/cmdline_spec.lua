@@ -1,16 +1,47 @@
 --- @diagnostic disable: undefined-global
--- Command-line mode handlers. The motion logic is covered by
--- motion_spec.lua; here we verify the handlers exist and that
--- cmdline_delete_word can modify the cmdline via setcmdline.
-
 local helpers = require('test.cword_helpers')
+local Screen = require('nvim-test.screen')
 local eq = helpers.eq
 
 describe('command-line mode', function()
+  local screen
+
   before_each(function()
     helpers.clear()
     helpers.setup_path()
+    helpers.exec_lua(function()
+      local m = require('cword')
+      m.setup({ backend = 'icu_ffi' })
+      local opts = { noremap = true, silent = true }
+      vim.keymap.set('c', '<m-f>', function()
+        m.cmdline_forward()
+        return ''
+      end, vim.tbl_extend('force', opts, { expr = true }))
+      vim.keymap.set('c', '<m-b>', function()
+        m.cmdline_backward()
+        return ''
+      end, vim.tbl_extend('force', opts, { expr = true }))
+      vim.keymap.set('c', '<c-w>', function()
+        m.cmdline_delete_word()
+        return ''
+      end, vim.tbl_extend('force', opts, { expr = true }))
+    end)
+    screen = Screen.new(40, 6)
+    screen:attach()
+    screen:set_option('ext_cmdline', true)
   end)
+
+  after_each(function()
+    if screen then
+      screen:detach()
+    end
+  end)
+
+  local function expect_cmdline(text, pos)
+    screen:expect({
+      cmdline = { { firstc = ':', content = { { text } }, pos = pos } },
+    })
+  end
 
   it('exposes the three cmdline handlers', function()
     local cword = helpers.exec_lua(function()
@@ -26,40 +57,31 @@ describe('command-line mode', function()
     eq('function', cword.cd)
   end)
 
-  it('cmdline_delete_word cuts the word before cursor (setcmdline works)', function()
-    -- setcmdpos does not stick inside CmdlineEnter (neovim
-    -- limitation), but setcmdline DOES. From the end of "ab|cd"
-    -- (pos=5, the cursor position after setcmdline), backward
-    -- lands on the start of "abcd" (byte_start=1), so the
-    -- handler deletes the whole word.
-    local r = helpers.exec_lua(function()
-      local m = require('cword')
-      m.setup({ backend = 'icu_ffi' })
-      local result, done = nil, false
-      vim.api.nvim_create_autocmd('CmdlineEnter', {
-        once = true,
-        callback = function()
-          vim.fn.setcmdline('hello world')
-          m.cmdline_delete_word()
-          result = { line = vim.fn.getcmdline() }
-          done = true
-        end,
-      })
-      vim.api.nvim_feedkeys(':', 'nx', false)
-      vim.wait(99, function()
-        return done
-      end)
-      return result
-    end)
-    -- From the end of "hello world", backward returns 7
-    -- (start of "世界" in icu_ffi terms — actually "world"
-    -- for Latin). setcmdline("hello ") — deletes "world".
-    -- But actually backward from pos=12 (end) on "hello world":
-    -- tokens: hello(1-5), ' '(6), world(7-11).
-    -- backward(12): tokens with byte_start < 12 — all. last
-    -- non-ws: world(7). prev=world. cursor=12 <= 11? No.
-    -- Return 7. setcmdline(line:sub(1,6) .. line:sub(12))
-    -- = "hello " .. "" = "hello ".
-    eq('hello ', r.line)
+  it('alt-f moves to the next word', function()
+    helpers.feed(':hello world')
+    helpers.feed('<Home>')
+    helpers.feed('<m-f>')
+    expect_cmdline('hello world', 6)
+  end)
+
+  it('alt-b moves to the previous word from the end', function()
+    helpers.feed(':hello world')
+    helpers.feed('<Home>')
+    helpers.feed('<m-f>')
+    helpers.feed('<m-b>')
+    expect_cmdline('hello world', 0)
+  end)
+
+  it('alt-b from the start of a word lands on the previous word', function()
+    helpers.feed(':hello world')
+    helpers.feed('<m-b>')
+    expect_cmdline('hello world', 6)
+  end)
+
+  it('c-w deletes the word before cursor and keeps cursor at the boundary', function()
+    helpers.feed(':abcd')
+    helpers.feed('<Left><Left>')
+    helpers.feed('<c-w>')
+    expect_cmdline('cd', 0)
   end)
 end)
