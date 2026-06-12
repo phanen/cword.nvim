@@ -10,36 +10,18 @@ local eq = helpers.eq
 local text_of = helpers.text_of
 local slice = helpers.slice
 
-describe('segmenter', function()
-  describe('error handling', function()
-    it('rejects unknown backend names', function()
-      local ok, err = pcall(Segmenter.new, { backend = 'nope' })
-      eq(false, ok)
-      assert(err:find('nope'), 'error should mention the bad name')
-      assert(err:find('icu_ffi'), 'error should list known backends')
-    end)
-  end)
-
-  describe('backends()', function()
-    it('returns the sorted list of registered backend names', function()
-      local names = Segmenter.backends()
-      eq('icu_ffi', table.concat(names, ','))
-    end)
-  end)
-end)
-
-describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
+describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
   -- Skip on systems without libicuuc; the load would fail.
-  local ok, icu_ffi = pcall(require, 'cword.backends.icu_ffi')
+  local ok, _ = pcall(require, 'cword.segmenter')
   if not ok then
     return
   end
 
   it('auto-detects the loaded ICU major version', function()
-    eq('number', type(icu_ffi._icu_version))
+    eq('number', type(Segmenter._icu_version))
     assert(
-      icu_ffi._icu_version >= 50 and icu_ffi._icu_version <= 80,
-      'detected icu version looks implausible: ' .. tostring(icu_ffi._icu_version)
+      Segmenter._icu_version >= 50 and Segmenter._icu_version <= 80,
+      'detected icu version looks implausible: ' .. tostring(Segmenter._icu_version)
     )
   end)
 
@@ -52,8 +34,7 @@ describe('icu_ffi backend (real ICU via libicuuc FFI)', function()
     local function cut_ffi(str)
       return helpers.exec_lua(function(s)
         local Segmenter = require('cword.segmenter')
-        local seg = Segmenter.new({ backend = 'icu_ffi' })
-        return seg:cut(s)
+        return Segmenter.cut(s)
       end, str)
     end
 

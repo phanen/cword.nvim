@@ -15,7 +15,7 @@ describe('insert mode', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local cword = require('cword')
-      cword.setup({ backend = 'icu_ffi' })
+      cword.setup()
       local opts = { noremap = true, silent = true }
       vim.keymap.set('i', '<m-f>', cword.insert_forward, opts)
       vim.keymap.set('i', '<m-b>', cword.insert_backward, opts)

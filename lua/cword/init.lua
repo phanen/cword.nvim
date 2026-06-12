@@ -14,9 +14,10 @@ local M = {}
 M.Segmenter = require('cword.segmenter')
 M.motion = require('cword.motion')
 
--- Lazy-init state. _seg is set on the first call to setup() or to
--- any move_* handler.
-local _seg ---@type table
+-- Lazy-init state. _cut is the cut() function from the icu_ffi
+-- segmenter; it is bound on the first call to setup() or to any
+-- move_* handler.
+local _cut
 
 ---@param tok table
 ---@return boolean
@@ -24,27 +25,11 @@ local function is_whitespace(tok)
   return tok.text:match('^%s+$') ~= nil
 end
 
----@return string
-local function default_backend()
-  -- The icu_ffi backend is mandatory: every supported platform
-  -- ships libicuuc and the LuaJIT FFI binding loads it eagerly
-  -- at require time. The pcall probe is only there so a clean
-  -- import does not hard-crash if libicuuc is somehow missing
-  -- (e.g. a test harness that fakes the FFI module).
-  local ok = pcall(function()
-    require('ffi').load('icuuc')
-  end)
-  assert(ok, 'cword: libicuuc is required but could not be loaded')
-  return 'icu_ffi'
-end
-
----@param opts? { backend?: string }
 function M.setup(opts)
-  if _seg then
+  if _cut then
     return
   end
-  opts = opts or {}
-  _seg = M.Segmenter.new({ backend = opts.backend or default_backend() })
+  _cut = M.Segmenter.cut
 end
 
 -- Wrap-aware cursor mover used by all four directions. `direction` is
@@ -54,7 +39,7 @@ local function cursor_move(method, direction)
   local is_bwd = direction == 'backward'
 
   return function()
-    if not _seg then
+    if not _cut then
       M.setup()
     end
 
@@ -66,7 +51,7 @@ local function cursor_move(method, direction)
     for _ = 1, count do
       local found = false
       local line = vim.api.nvim_get_current_line()
-      c = method(_seg, line, c)
+      c = method(_cut, line, c)
 
       if is_fwd and c >= #line then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -75,7 +60,7 @@ local function cursor_move(method, direction)
           if not s then
             break
           end
-          for _, t in ipairs(_seg:cut(s)) do
+          for _, t in ipairs(_cut(s)) do
             if not is_whitespace(t) then
               r, c = nr, t.byte_start
               found = true
@@ -101,7 +86,7 @@ local function cursor_move(method, direction)
           if not s then
             break
           end
-          for _, t in ipairs(_seg:cut(s)) do
+          for _, t in ipairs(_cut(s)) do
             if not is_whitespace(t) then
               r, c = nr, t.byte_end
               found = true
@@ -149,7 +134,7 @@ M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
 -- trailing newline without grabbing line2.
 local function op_motion(method, direction)
   return function()
-    if not _seg then
+    if not _cut then
       M.setup()
     end
     local count = math.max(1, vim.v.count1)
@@ -157,7 +142,7 @@ local function op_motion(method, direction)
     local r, c = row, col0 + 1
     for _ = 1, count do
       local line = vim.api.nvim_get_current_line()
-      c = method(_seg, line, c)
+      c = method(_cut, line, c)
       if direction == 'forward' and c >= #line then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
@@ -166,7 +151,7 @@ local function op_motion(method, direction)
           if not s then
             break
           end
-          for _, t in ipairs(_seg:cut(s)) do
+          for _, t in ipairs(_cut(s)) do
             if not is_whitespace(t) then
               r, c = nr, t.byte_start
               found = true
@@ -188,7 +173,7 @@ local function op_motion(method, direction)
           if not s then
             break
           end
-          for _, t in ipairs(_seg:cut(s)) do
+          for _, t in ipairs(_cut(s)) do
             if not is_whitespace(t) then
               r, c = nr, t.byte_start
               found = true
@@ -272,7 +257,7 @@ end
 -- skipped (the selection just extends the existing visual range).
 local function textobject(ai_type)
   return function()
-    if not _seg then
+    if not _cut then
       M.setup()
     end
     local op = vim.v.operator
@@ -291,7 +276,7 @@ local function textobject(ai_type)
     -- the previous word at a boundary" behavior, which would
     -- mis-select when the cursor lands on the first byte of a
     -- word.
-    local toks = _seg:cut(line)
+    local toks = _cut(line)
     local word_tok = nil
     for _, t in ipairs(toks) do
       if t.byte_start <= c and t.byte_end >= c then
@@ -391,7 +376,7 @@ M.textobject_a_word = textobject('a')
 local function insert_move(method, direction)
   local is_fwd = direction == 'forward' or direction == 'end_forward'
   return function()
-    if not _seg then
+    if not _cut then
       M.setup()
     end
     local win = vim.api.nvim_get_current_win()
@@ -402,10 +387,10 @@ local function insert_move(method, direction)
     -- col0+1 for forward, col0 for backward (exclusive).
     local target
     if is_fwd then
-      target = method(_seg, line, cursor)
+      target = method(_cut, line, cursor)
     else
       -- backward: use cursor as-is (exclusive bound)
-      target = method(_seg, line, cursor)
+      target = method(_cut, line, cursor)
     end
     -- Defer the cursor move: calling nvim_win_set_cursor from
     -- inside an i-mode mapping callback races the screen
@@ -424,7 +409,7 @@ M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
 
 -- Insert-mode delete word backward (<c-w>).
 M.insert_delete_word = function()
-  if not _seg then
+  if not _cut then
     M.setup()
   end
   local win = vim.api.nvim_get_current_win()
@@ -444,13 +429,13 @@ M.insert_delete_word = function()
     return
   end
 
-  local target = M.motion.backward(_seg, line, cursor)
+  local target = M.motion.backward(_cut, line, cursor)
   if target >= cursor then
     return
   end
 
   -- Eat the word before cursor plus any following whitespace.
-  local toks = _seg:cut(line)
+  local toks = _cut(line)
   local eat_to = col0 -- 0-indexed exclusive end
   local seen_word = false
   for _, t in ipairs(toks) do
@@ -479,42 +464,41 @@ end
 -- Command-line mode word motions.
 
 M.cmdline_forward = function()
-  if not _seg then
+  if not _cut then
     M.setup()
   end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-  local target = M.motion.forward(_seg, line, pos)
+  local target = M.motion.forward(_cut, line, pos)
   if target > pos then
     vim.fn.setcmdline(line, target)
   end
 end
 
 M.cmdline_backward = function()
-  if not _seg then
+  if not _cut then
     M.setup()
   end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-  local target = M.motion.backward(_seg, line, pos)
+  local target = M.motion.backward(_cut, line, pos)
   if target < pos then
     vim.fn.setcmdline(line, target)
   end
 end
 
 M.cmdline_delete_word = function()
-  if not _seg then
+  if not _cut then
     M.setup()
   end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-  local target = M.motion.backward(_seg, line, pos)
+  local target = M.motion.backward(_cut, line, pos)
   if target < pos then
     vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos), target)
   end
 end
 
 -- Exposed for spec probing.
-M._default_backend = default_backend
 
 return M

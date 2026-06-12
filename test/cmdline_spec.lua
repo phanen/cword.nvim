@@ -11,7 +11,7 @@ describe('command-line mode', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local m = require('cword')
-      m.setup({ backend = 'icu_ffi' })
+      m.setup()
       local opts = { noremap = true, silent = true }
       vim.keymap.set('c', '<m-f>', function()
         m.cmdline_forward()

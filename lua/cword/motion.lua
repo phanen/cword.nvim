@@ -1,9 +1,10 @@
--- Word motion utilities. Each function takes a Segmenter plus a line
--- and a 1-indexed byte cursor, and returns the next/previous column
--- as a 1-indexed byte offset. The line excludes the trailing newline.
+-- Word motion utilities. Each function takes a `cut` function plus a
+-- line and a 1-indexed byte cursor, and returns the next/previous
+-- column as a 1-indexed byte offset. The line excludes the trailing
+-- newline.
 --
 -- These are building blocks: bind them to keys yourself, or call
--- require('cword').setup({...}) for the default w/b/e/ge wiring.
+-- require('cword').setup() for the default w/b/e/ge wiring.
 
 local M = {}
 
@@ -26,13 +27,13 @@ local function clamp(line, cursor)
   return cursor
 end
 
----@param segmenter table
+---@param cut fun(line: string): table[] segmentation function
 ---@param line string
 ---@param cursor integer 1-indexed byte offset
 ---@return integer column of next non-whitespace token start, or #line
-function M.forward(segmenter, line, cursor)
+function M.forward(cut, line, cursor)
   cursor = clamp(line, cursor)
-  for _, t in ipairs(segmenter:cut(line)) do
+  for _, t in ipairs(cut(line)) do
     if t.byte_start > cursor and not is_whitespace(t) then
       return t.byte_start
     end
@@ -40,14 +41,14 @@ function M.forward(segmenter, line, cursor)
   return #line + 1
 end
 
----@param segmenter table
+---@param cut fun(line: string): table[]
 ---@param line string
 ---@param cursor integer
 ---@return integer column of previous non-whitespace token start, or 1
-function M.backward(segmenter, line, cursor)
+function M.backward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local inside, prev
-  for _, t in ipairs(segmenter:cut(line)) do
+  for _, t in ipairs(cut(line)) do
     if t.byte_start < cursor then
       if not is_whitespace(t) then
         prev = t
@@ -63,13 +64,13 @@ function M.backward(segmenter, line, cursor)
   return (prev or { byte_start = 1 }).byte_start
 end
 
----@param segmenter table
+---@param cut fun(line: string): table[]
 ---@param line string
 ---@param cursor integer
 ---@return integer column of next word end, or #line
-function M.end_forward(segmenter, line, cursor)
+function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
-  for _, t in ipairs(segmenter:cut(line)) do
+  for _, t in ipairs(cut(line)) do
     if t.byte_end > cursor then
       return t.byte_end + 1
     end
@@ -77,15 +78,15 @@ function M.end_forward(segmenter, line, cursor)
   return #line + 1
 end
 
----@param segmenter table
+---@param cut fun(line: string): table[]
 ---@param line string
 ---@param cursor integer
 ---@return integer column of previous word end, or 1
-function M.end_backward(segmenter, line, cursor)
+function M.end_backward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local inside, prev
-  for _, t in ipairs(segmenter:cut(line)) do
-    if t.byte_start < cursor then
+  for _, t in ipairs(cut(line)) do
+    if t.byte_end < cursor then
       prev = t
       if cursor <= t.byte_end then
         inside = t

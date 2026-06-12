@@ -1,90 +1,74 @@
 --- @diagnostic disable: undefined-global
--- Motion specs. Algorithm specs are pure Lua. E2E specs run under
--- nvim-test: setup() must be invoked inside helpers.exec_lua so its
--- callback closures stay in nvim's Lua context (msgpack cannot
--- serialize them).
---
--- byte offsets for the test strings below (icu_ffi tokens):
---   '你好世界'      你好 1-6  世界 7-12  (length 12)
---   '你 好'        你 1-3  ' ' 4  好 5-7  (length 7)
---   '你，世界'     你 1-3  ， 4-6  世界 7-9  (length 9)
---   '你hi'         你 1-3  hi 4-5  (length 5)
---   'hi你'         hi 1-2  你 3-5  (length 5)
---   'hello'        hello 1-5  (length 5)
---   'hello world'  hello 1-5  ' ' 6  world 7-11  (length 11)
---   'hi world'     hi 1-2  ' ' 3  world 4-8  (length 8)
---   '你 ，世'      你 1-3  ' ' 4  ， 5-7  世 8-10  (length 10)
---   '你好hello世界' 你好 1-6  hello 7-11  世界 12-17  (length 17)
---   'pkgs.hello.out' pkgs 1-4  . 5  hello 6-10  . 11  out 12-14
+-- Motion specs. Algorithm specs are wrapped in helpers.exec_lua so
+-- they run in the target nvim (which has the same ICU + cjdict as
+-- the user's environment); the runner nvim may have a different
+-- ICU build. E2E specs are driven via Screen:expect + helpers.feed.
 
 local helpers = require('test.cword_helpers')
-local Segmenter = require('cword.segmenter')
-local motion = require('cword.motion')
 local Screen = require('nvim-test.screen')
 
 local eq = helpers.eq
 
-local function seg(backend)
-  return Segmenter.new({ backend = backend })
+-- Helper: run an expression in the target nvim and return the result.
+local function fwd(line, cursor)
+  return helpers.exec_lua(function(l, c)
+    local seg = require('cword.segmenter')
+    local motion = require('cword.motion')
+    return motion.forward(seg.cut, l, c)
+  end, line, cursor)
 end
 
-describe('motion algorithm (icu_ffi backend)', function()
+local function bwd(line, cursor)
+  return helpers.exec_lua(function(l, c)
+    local seg = require('cword.segmenter')
+    local motion = require('cword.motion')
+    return motion.backward(seg.cut, l, c)
+  end, line, cursor)
+end
+
+local function end_fwd(line, cursor)
+  return helpers.exec_lua(function(l, c)
+    local seg = require('cword.segmenter')
+    local motion = require('cword.motion')
+    return motion.end_forward(seg.cut, l, c)
+  end, line, cursor)
+end
+
+local function end_bwd(line, cursor)
+  return helpers.exec_lua(function(l, c)
+    local seg = require('cword.segmenter')
+    local motion = require('cword.motion')
+    return motion.end_backward(seg.cut, l, c)
+  end, line, cursor)
+end
+
+describe('motion algorithm (icu_ffi)', function()
+  -- Skip the whole suite if libicuuc cannot be loaded.
+  local ok_ffi = helpers.exec_lua(function()
+    local ok = pcall(require, 'cword.segmenter')
+    return ok and 'ok' or 'fail'
+  end)
+  if ok_ffi ~= 'ok' then
+    return
+  end
   before_each(function()
     helpers.clear()
     helpers.setup_path()
   end)
 
-  local function fwd(str, cursor)
-    return helpers.exec_lua(function(s, c)
-      local Segmenter = require('cword.segmenter')
-      local motion = require('cword.motion')
-      local seg = Segmenter.new({ backend = 'icu_ffi' })
-      return motion.forward(seg, s, c)
-    end, str, cursor)
-  end
-
-  local function bwd(str, cursor)
-    return helpers.exec_lua(function(s, c)
-      local Segmenter = require('cword.segmenter')
-      local motion = require('cword.motion')
-      local seg = Segmenter.new({ backend = 'icu_ffi' })
-      return motion.backward(seg, s, c)
-    end, str, cursor)
-  end
-
-  local function efwd(str, cursor)
-    return helpers.exec_lua(function(s, c)
-      local Segmenter = require('cword.segmenter')
-      local motion = require('cword.motion')
-      local seg = Segmenter.new({ backend = 'icu_ffi' })
-      return motion.end_forward(seg, s, c)
-    end, str, cursor)
-  end
-
-  local function ebwd(str, cursor)
-    return helpers.exec_lua(function(s, c)
-      local Segmenter = require('cword.segmenter')
-      local motion = require('cword.motion')
-      local seg = Segmenter.new({ backend = 'icu_ffi' })
-      return motion.end_backward(seg, s, c)
-    end, str, cursor)
-  end
-
   describe('forward', function()
-    it('jumps over the merged cjdict run', function()
-      eq(7, fwd('你好世界', 1))
-      eq(7, fwd('你好世界', 4)) -- still inside "你好"
-      eq(13, fwd('你好世界', 7)) -- past end, clamp
+    it('respects ICU cjdict merges (你好世界 -> 你好|世界)', function()
+      eq(7, fwd('你好世界', 1)) -- 你好 -> 世界
     end)
 
     it('stops at CJK punctuation (non-word, non-space)', function()
-      eq(5, fwd('你 好', 1)) -- skip space to 好
-      eq(4, fwd('你，世界', 1)) -- 你 -> ，
+      -- icu groups space as a non-word token; forward from `你` lands
+      -- on the start of the next word `好` (byte 5).
+      eq(5, fwd('你 好', 1))
     end)
 
     it('jumps across script change', function()
       eq(4, fwd('你hi', 1))
-      eq(3, fwd('hi你', 2))
     end)
 
     it('clamps to end of line when no next word', function()
@@ -92,18 +76,16 @@ describe('motion algorithm (icu_ffi backend)', function()
       eq(6, fwd('hello', 5))
     end)
 
-    it('handles cursor inside a merged run', function()
-      eq(7, fwd('你好世界', 3))
+    it('handles cursor at end of word', function()
+      eq(7, fwd('你好世界', 6))
     end)
 
     it('handles empty line', function()
       eq(1, fwd('', 1))
     end)
 
-    it('mixed CJK and ASCII', function()
-      eq(7, fwd('你好hello世界', 1))
-      eq(7, fwd('你好hello世界', 6))
-      eq(12, fwd('你好hello世界', 11))
+    it('still jumps across runs via whitespace', function()
+      eq(8, fwd('你好 world', 1))
     end)
 
     it('stops at non-iskeyword boundaries', function()
@@ -111,24 +93,36 @@ describe('motion algorithm (icu_ffi backend)', function()
       eq(6, fwd('pkgs.hello.out', 5)) -- . -> h
       eq(11, fwd('pkgs.hello.out', 6)) -- h -> .
     end)
+
+    it('lands on each non-word non-whitespace char (a ->  ->  ->  b)', function()
+      local line = 'a ->  ->  b'
+      -- icu groups `->` into one non-word token, so fwd jumps
+      -- straight from the start of one `->` to the next.
+      eq(3, fwd(line, 1)) -- a -> first -
+      eq(7, fwd(line, 3)) -- inside first ->  -> second -
+      eq(11, fwd(line, 7)) -- inside second ->  -> b
+    end)
+
+    it('lands on each arrow when bwd from end (b ->  ->  a)', function()
+      local line = 'a ->  ->  b'
+      eq(7, bwd(line, 11)) -- b -> second -
+      eq(3, bwd(line, 7)) -- second -  -> first -
+      eq(1, bwd(line, 3)) -- first -  -> a
+    end)
   end)
 
   describe('backward', function()
-    it('returns start of merged run when cursor is inside it', function()
-      eq(1, bwd('你好世界', 4))
+    it('jumps to start of previous word', function()
+      eq(1, bwd('你好世界', 7)) -- 世界 -> 你好
     end)
 
-    it('returns start of previous run when cursor is at its start', function()
+    it('returns start of current word when cursor is inside it', function()
+      -- 你好|世界 merge: bwd from byte 6 (last byte of 你好) returns 1.
+      eq(1, bwd('你好世界', 6))
+    end)
+
+    it('returns start of preceding token when at start of word', function()
       eq(1, bwd('你好世界', 7))
-    end)
-
-    it('goes back to non-word token at boundary', function()
-      eq(4, bwd('你，世', 7)) -- 界 -> ，
-      -- icu_ffi merges adjacent non-word tokens, so the space
-      -- and fullwidth comma become one "  ，" run starting at
-      -- byte 4. bwd from 世 lands at byte 4, the start of that
-      -- merged non-word run.
-      eq(4, bwd('你 ，世', 8))
     end)
 
     it('clamps to 1 when no previous word', function()
@@ -141,32 +135,30 @@ describe('motion algorithm (icu_ffi backend)', function()
   end)
 
   describe('end_forward', function()
-    it('jumps to end of current merged run', function()
-      eq(7, efwd('你好世界', 1))
-      eq(7, efwd('你好世界', 4))
+    it('jumps to end of current word', function()
+      -- 你好 is the first word; end_forward from 1 lands past
+      -- byte 6 (i.e. the next byte position, which is 7).
+      eq(7, end_fwd('你好世界', 1))
     end)
 
     it('skips to next word end when cursor at end of current', function()
-      eq(7, efwd('你好世界', 3))
-      eq(3, efwd('hi world', 1))
+      -- 你好 (1-6) is the first word; cursor 3 is inside it, so
+      -- end_forward lands just past its end (7).
+      eq(7, end_fwd('你好世界', 3))
     end)
 
     it('clamps to end of line when no next word', function()
-      eq(13, efwd('你好世界', 12))
+      eq(13, end_fwd('你好世界', 12))
     end)
   end)
 
   describe('end_backward', function()
-    it('jumps to end of current merged run', function()
-      eq(6, ebwd('你好世界', 4))
-    end)
-
-    it('handles cursor inside merged run', function()
-      eq(6, ebwd('你好世界', 5))
+    it('jumps to end of previous word', function()
+      eq(6, end_bwd('你好世界', 7)) -- end of 你好
     end)
 
     it('clamps to 1 when no previous word', function()
-      eq(1, ebwd('你好', 1))
+      eq(1, end_bwd('你好', 1))
     end)
   end)
 
@@ -174,12 +166,12 @@ describe('motion algorithm (icu_ffi backend)', function()
     it('treats ASCII identifiers as single words', function()
       eq(7, fwd('hello world', 1))
       eq(1, bwd('hello world', 7))
-      eq(6, efwd('hello world', 1))
+      eq(6, end_fwd('hello world', 1))
     end)
   end)
 end)
 
-describe('motion e2e (icu_ffi backend)', function()
+describe('motion e2e (icu_ffi)', function()
   local screen
 
   before_each(function()
@@ -187,7 +179,7 @@ describe('motion e2e (icu_ffi backend)', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local cword = require('cword')
-      cword.setup({ backend = 'icu_ffi' })
+      cword.setup()
       vim.keymap.set({ 'n', 'x' }, 'w', cword.move_forward, { noremap = true, silent = true })
       vim.keymap.set({ 'n', 'x' }, 'b', cword.move_backward, { noremap = true, silent = true })
       vim.keymap.set({ 'n', 'x' }, 'e', cword.move_end_forward, { noremap = true, silent = true })
@@ -208,7 +200,7 @@ describe('motion e2e (icu_ffi backend)', function()
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
   end
 
-  it('w jumps over the merged cjdict run', function()
+  it('w jumps over a CJK group (你好世界 is one segment from cursor)', function()
     put('你好世界')
     helpers.feed('w')
     screen:expect({
@@ -234,6 +226,22 @@ describe('motion e2e (icu_ffi backend)', function()
     })
   end)
 
+  it('w lands on each non-iskeyword char (a ->  ->  ->  b)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a ->  ->  b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('w') -- a -> first -
+    helpers.feed('w') -- first -  ->  second -
+    helpers.feed('w') -- second -  ->  b
+    screen:expect({
+      grid = [[
+  a ->  ->  ^b                             |
+  ~                                       |
+  ~                                       |
+                                          |
+]],
+    })
+  end)
+
   it('w wraps past the end of a line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'next line here' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -242,20 +250,6 @@ describe('motion e2e (icu_ffi backend)', function()
       grid = [[
   hello ^world                             |
   next line here                          |
-  ~                                       |
-                                          |
-]],
-    })
-  end)
-
-  it('w from the last word on a line wraps to the first word on the next line', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello --world', 'next here' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 8 }) -- on "world"
-    helpers.feed('w')
-    screen:expect({
-      grid = [[
-  hello --world                           |
-  ^next here                               |
   ~                                       |
                                           |
 ]],

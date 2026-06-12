@@ -15,7 +15,7 @@ describe('operator-pending mode', function()
     helpers.clear()
     helpers.setup_path()
     helpers.exec_lua(function()
-      require('cword').setup({ backend = 'icu_ffi' })
+      require('cword').setup()
       local m = require('cword')
       local opts = { noremap = true, silent = true }
       vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
@@ -185,7 +185,7 @@ describe('operator-pending mode (icu_ffi backend)', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local cword = require('cword')
-      cword.setup({ backend = 'icu_ffi' })
+      cword.setup()
       local m = cword
       local opts = { noremap = true, silent = true }
       vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
@@ -311,7 +311,7 @@ describe('textobject iw/aw (icu_ffi backend)', function()
     helpers.setup_path()
     helpers.exec_lua(function()
       local cword = require('cword')
-      cword.setup({ backend = 'icu_ffi' })
+      cword.setup()
       local m = cword
       local opts = { noremap = true, silent = true }
       vim.keymap.set({ 'n', 'x' }, 'w', m.move_forward, opts)
