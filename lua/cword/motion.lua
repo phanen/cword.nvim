@@ -71,8 +71,8 @@ end
 function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
   for _, t in ipairs(cut(line)) do
-    if t.byte_end > cursor then
-      return t.byte_end + 1
+    if t.byte_end > cursor and not is_whitespace(t) then
+      return t.byte_end
     end
   end
   return #line + 1
