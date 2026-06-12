@@ -214,7 +214,12 @@ local function op_motion(method, direction)
       if r > row then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         e_row, e_col = r - 2, #(lines[r - 1] or '')
+      elseif direction == 'end_forward' then
+        -- end_forward returns byte_end (inclusive), so the visual
+        -- end is byte_end - 1 to include the last character.
+        e_row, e_col = r - 1, math.max(0, c - 1)
       else
+        -- forward returns byte_start of the next word.
         e_row, e_col = r - 1, math.max(0, c - 2)
       end
     end
@@ -383,22 +388,68 @@ local function insert_move(method, direction)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
     local cursor = col0 + 1
     local line = vim.api.nvim_get_current_line()
-    -- In insert mode, cursor is between chars (col0). Move to
-    -- col0+1 for forward, col0 for backward (exclusive).
-    local target
-    if is_fwd then
-      target = method(_cut, line, cursor)
-    else
-      -- backward: use cursor as-is (exclusive bound)
-      target = method(_cut, line, cursor)
+    local target = method(_cut, line, cursor)
+
+    -- If forward returned past-end and the cursor is not yet at end
+    -- of line, move to end first. Only wrap on a subsequent call.
+    if is_fwd and target > #line and cursor <= #line then
+      target = #line + 1
+    elseif is_fwd and target > #line and cursor > #line then
+      -- Scan forward lines for the first non-whitespace token.
+      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      local found = false
+      local r = row
+      for nr = r + 1, #lines do
+        local s = lines[nr]
+        if not s then
+          break
+        end
+        for _, t in ipairs(_cut(s)) do
+          if not is_whitespace(t) then
+            row, target, found = nr, t.byte_start, true
+            break
+          end
+        end
+        if found then
+          break
+        end
+        if #s == 0 then
+          row, target, found = nr, 1, true
+          break
+        end
+      end
+      if not found then
+        return
+      end
+    elseif not is_fwd and target <= 1 and col0 == 0 then
+      -- Scan backward lines for the last non-whitespace token.
+      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      local found = false
+      for nr = row - 1, 1, -1 do
+        local s = lines[nr]
+        if not s then
+          break
+        end
+        for _, t in ipairs(_cut(s)) do
+          if not is_whitespace(t) then
+            row, target, found = nr, t.byte_end + 1, true
+          end
+        end
+        if found then
+          break
+        end
+        if #s == 0 then
+          row, target, found = nr, 1, true
+          break
+        end
+      end
+      if not found then
+        return
+      end
     end
-    -- Defer the cursor move: calling nvim_win_set_cursor from
-    -- inside an i-mode mapping callback races the screen
-    -- redraw and the next screen:expect sees the old position.
+
     local target_col = math.max(0, target - 1)
-    vim.schedule(function()
-      pcall(vim.api.nvim_win_set_cursor, win, { row, target_col })
-    end)
+    pcall(vim.api.nvim_win_set_cursor, win, { row, target_col })
   end
 end
 
@@ -419,12 +470,12 @@ M.insert_delete_word = function()
 
   -- Empty line at col 0: delete the newline, joining with the
   -- previous line (matching Vim's built-in <c-w>).
-  if #line == 0 and col0 == 0 and row > 1 then
-    local prev_len = #(vim.api.nvim_buf_get_lines(0, row - 2, row - 1, false)[1] or '')
-    local start_r, end_r = row - 1, row
+  if col0 == 0 and row > 1 then
+    local prev = vim.api.nvim_buf_get_lines(0, row - 2, row - 1, false)[1] or ''
+    local prev_len = #prev
     vim.fn.setreg('-', '\n')
     vim.o.undolevels = vim.o.undolevels
-    vim.api.nvim_buf_set_lines(0, start_r, end_r, false, {})
+    vim.api.nvim_buf_set_lines(0, row - 2, row, false, { prev .. line })
     pcall(vim.api.nvim_win_set_cursor, 0, { row - 1, prev_len })
     return
   end
