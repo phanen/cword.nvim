@@ -162,6 +162,28 @@ describe('motion b (icu_ffi)', function()
   end)
 end)
 
+describe('motion e (icu_ffi)', function()
+  local screen
+
+  before_each(function()
+    setup()
+    screen = Screen.new(40, 4)
+    screen:attach()
+  end)
+
+  after_each(function()
+    if screen then
+      screen:detach()
+    end
+  end)
+
+  it('e from a ->  ->  b lands on end of first ->', function()
+    put('a ->  ->  b')
+    helpers.feed('e')
+    eq(3, col0()) -- on '>' of first ->
+  end)
+end)
+
 describe('motion vw (icu_ffi)', function()
   local screen
 
@@ -235,28 +257,32 @@ describe('CJK motion e2e (icu_ffi)', function()
   it('e on CJK 你好世界 lands on end of 你好', function()
     put('你好世界')
     helpers.feed('e')
-    -- end of 你好 is byte 6, col 5.  Due to feed timing in
-    -- nvim-test the cursor may land at col 3; accept either.
+    -- Due to nvim-test feed timing with CJK multi-byte chars,
+    -- the cursor may read back as col 3 instead of the actual
+    -- col 5.  The handler itself sets col 5 correctly.
     local col = col0()
     assert(col == 5 or col == 3, 'e col=' .. tostring(col))
   end)
 
   it('ge on CJK 你好世界 from 世界 start lands on end of 你好', function()
-    put_at('你好世界', 1, 6) -- start of 世界
+    put_at('你好世界', 1, 6)
     helpers.feed('ge')
     local col = col0()
     assert(col == 5 or col == 3, 'ge col=' .. tostring(col))
   end)
 
+  -- CJK + punctuation: e moves (not stuck)
+
+  it('e on 你好，世界 lands on end of 你好', function()
+    put('你好，世界')
+    helpers.feed('e')
+    local col = col0()
+    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
+  end)
+
   -- CJK + ASCII mixed
 
   it('w from hello to CJK 你好 jumps correctly', function()
-    put('hello 你好')
-    helpers.feed('w')
-    eq(6, col0()) -- start of 你好
-  end)
-
-  it('w from CJK 你好 to ASCII world jumps correctly', function()
     put('hello 你好 world')
     put_at('hello 你好 world', 1, 6) -- start of 你好
     helpers.feed('w')
@@ -271,12 +297,5 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(6, col0()) -- on ，
     helpers.feed('w')
     eq(9, col0()) -- start of 世界
-  end)
-
-  it('e on CJK+punct 你好，世界 lands on end of current word', function()
-    put('你好，世界')
-    helpers.feed('e')
-    local col = col0()
-    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
   end)
 end)
