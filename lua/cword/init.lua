@@ -278,6 +278,49 @@ local function op_motion(method, direction)
         if not found then
           break
         end
+      elseif direction == 'end_backward' and c <= 1 and col0 == 0 then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r - 1, 1, -1 do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          local last
+          for _, t in ipairs(_cut(s)) do
+            if not is_whitespace(t) then
+              last = t
+            end
+          end
+          if last then
+            r, c, found = nr, last.byte_end, true
+            break
+          end
+        end
+        if not found then
+          break
+        end
+      elseif direction == 'end_forward' and c >= #line then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r + 1, #lines do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          for _, t in ipairs(_cut(s)) do
+            if not is_whitespace(t) then
+              r, c, found = nr, t.byte_end, true
+              break
+            end
+          end
+          if found then
+            break
+          end
+        end
+        if not found then
+          break
+        end
       end
     end
     if r == row and c - 1 == col0 then
