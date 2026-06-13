@@ -131,33 +131,19 @@ describe('operator-pending mode', function()
     eq('hello ', reg)
   end)
 
-  it('dw wraps across newlines and keeps the next line intact', function()
-    -- The visual-mode-based implementation had an off-by-one on
-    -- cross-line wrap because nvim_win_set_cursor is "on the char"
-    -- while Vim's `v` is "between chars"; computing the range via
-    -- nvim_buf_set_text makes the wrap end at the start of the
-    -- next line, not on its first character.
+  it('dw at end of line does not join lines', function()
+    -- Stock Vim's operator-pending w does NOT wrap to the next
+    -- line; only normal-mode w wraps.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 })
     helpers.feed('dw')
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
-    eq(1, #lines)
-    eq('world', lines[1])
-  end)
-
-  it('dw wraps across an empty line', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', '', 'next' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('dw')
-    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
-    eq(1, #lines)
-    eq('next', lines[1])
+    eq(2, #lines)
+    eq('hell', lines[1])
+    eq('world', lines[2])
   end)
 
   it('dw on a single-word last line deletes the whole line', function()
-    -- `dw` at end of input must still eat the trailing word; the
-    -- old visual-mode path deleted one byte too few because e_col
-    -- was clamped to c-2.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('dw')
@@ -179,13 +165,15 @@ describe('operator-pending mode', function()
     eq('world', lines[1])
   end)
 
-  it('d3w across multiple lines lands on the third word', function()
+  it('d3w across multiple lines deletes everything', function()
+    -- stock Vim's 3w wraps across lines; the motion lands past the
+    -- last character of the third line, so d3w deletes all three.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo', 'bar', 'baz' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('d3w')
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
-    eq('baz', lines[1])
+    eq('', lines[1])
   end)
 end)
 

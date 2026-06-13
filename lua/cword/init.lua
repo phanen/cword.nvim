@@ -143,26 +143,38 @@ local function op_motion(method, direction)
     for _ = 1, count do
       local line = vim.api.nvim_get_current_line()
       c = method(_cut, line, c)
+      -- Forward: when there is no next word on the current line,
+      -- only wrap to the next line when the count loop hasn't
+      -- finished (i.e. more motions are pending). The final
+      -- iteration that runs out of content stays at #line + 1
+      -- (past the last character) without crossing the newline,
+      -- matching stock Vim's operator-pending w semantics.
       if direction == 'forward' and c >= #line then
-        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local found = false
-        for nr = r + 1, #lines do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_start
-              found = true
+        if _ < count then
+          local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+          local found = false
+          for nr = r + 1, #lines do
+            local s = lines[nr]
+            if not s then
+              break
+            end
+            for _, t in ipairs(_cut(s)) do
+              if not is_whitespace(t) then
+                r, c = nr, t.byte_start
+                found = true
+                break
+              end
+            end
+            if found then
               break
             end
           end
-          if found then
+          if not found then
+            c = #line + 1
             break
           end
-        end
-        if not found then
+        else
+          c = #line + 1
           break
         end
       elseif direction == 'backward' and c <= 1 and col0 == 0 then
@@ -207,13 +219,18 @@ local function op_motion(method, direction)
       end
     else
       s_row, s_col = row - 1, col0
-      -- For cross-line forward we anchor the visual end on the
-      -- line *before* the wrap target (col = byte length) so the
-      -- visual range stops at the trailing newline instead of
-      -- including the first char of the next line.
+      -- For cross-line forward we end the visual selection on
+      -- the wrapper's target line at the motion position. If the
+      -- motion landed past the last character (c > #line) we take
+      -- the whole trailing line.
       if r > row then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        e_row, e_col = r - 2, #(lines[r - 1] or '')
+        local last_line = #lines
+        if r == last_line and c > #(lines[r] or '') then
+          e_row, e_col = last_line - 1, #(lines[last_line] or '')
+        else
+          e_row, e_col = r - 1, c - 1
+        end
       elseif direction == 'end_forward' then
         -- end_forward returns byte_end (inclusive), so the visual
         -- end is byte_end - 1 to include the last character.
