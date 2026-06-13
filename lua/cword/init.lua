@@ -286,14 +286,13 @@ local function op_motion(method, direction)
           if not s then
             break
           end
-          local last
           for _, t in ipairs(_cut(s)) do
             if not is_whitespace(t) then
-              last = t
+              r, c = nr, t.byte_start
+              found = true
             end
           end
-          if last then
-            r, c, found = nr, last.byte_end, true
+          if found then
             break
           end
         end
@@ -301,6 +300,9 @@ local function op_motion(method, direction)
           break
         end
       elseif direction == 'end_forward' and c >= #line then
+        -- TODO: count > 1 wraps on every iteration; the forward
+        -- (w) wrap guards with `_ < count` so the final iteration
+        -- stays at EOL.  Match that here for d2e/d3e parity.
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r + 1, #lines do
@@ -343,12 +345,31 @@ local function op_motion(method, direction)
     else
       s_row, s_col = row - 1, col0
       if r > row then
-        -- Cross-line forward: the visual end is on the target
-        -- line at c - 2 (exclusive of the next word's first
-        -- byte).  This matches stock Vim's exclusive motion
-        -- boundary: d deletes from cursor to just before the
-        -- motion target.
-        e_row, e_col = r - 1, math.max(0, c - 2)
+        if direction == 'end_forward' then
+          -- Cross-line end_forward: c is byte_end (0-indexed,
+          -- position past the last byte of the target word).
+          -- With onemore, this is a valid cursor column and
+          -- never lands inside a multi-byte sequence.
+          e_row, e_col = r - 1, c
+        else
+          -- Cross-line forward: the visual end is on the target
+          -- line at c - 2 (exclusive of the next word's first
+          -- byte).  This matches stock Vim's exclusive motion
+          -- boundary: d deletes from cursor to just before the
+          -- motion target.
+          e_row, e_col = r - 1, math.max(0, c - 2)
+        end
+      elseif direction == 'end_backward' and r < row then
+        -- Cross-line end_backward: put both visual endpoints on
+        -- the target line (s_col = token byte_start - 1, e_col =
+        -- #line past EOL).  The virtual position at #line consumes
+        -- the trailing newline without grabbing the first char of
+        -- the cursor's line (same pattern as 'backward').
+        -- c is byte_start of the target token (set by the
+        -- cross-line wrapping block above).
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        s_row, s_col = r - 1, math.max(0, c - 1)
+        e_row, e_col = r - 1, #(lines[r] or '')
       elseif direction == 'end_forward' or direction == 'end_backward' then
         -- end_forward returns byte_end (inclusive), so the visual
         -- end is byte_end - 1 to include the last character.
