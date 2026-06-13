@@ -219,18 +219,13 @@ local function op_motion(method, direction)
       end
     else
       s_row, s_col = row - 1, col0
-      -- For cross-line forward we end the visual selection on
-      -- the wrapper's target line at the motion position. If the
-      -- motion landed past the last character (c > #line) we take
-      -- the whole trailing line.
       if r > row then
-        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local last_line = #lines
-        if r == last_line and c > #(lines[r] or '') then
-          e_row, e_col = last_line - 1, #(lines[last_line] or '')
-        else
-          e_row, e_col = r - 1, c - 1
-        end
+        -- Cross-line forward: the visual end is on the target
+        -- line at c - 2 (exclusive of the next word's first
+        -- byte).  This matches stock Vim's exclusive motion
+        -- boundary: d deletes from cursor to just before the
+        -- motion target.
+        e_row, e_col = r - 1, math.max(0, c - 2)
       elseif direction == 'end_forward' then
         -- end_forward returns byte_end (inclusive), so the visual
         -- end is byte_end - 1 to include the last character.

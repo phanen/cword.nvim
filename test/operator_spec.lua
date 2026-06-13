@@ -166,14 +166,21 @@ describe('operator-pending mode', function()
   end)
 
   it('d3w across multiple lines deletes everything', function()
-    -- stock Vim's 3w wraps across lines; the motion lands past the
-    -- last character of the third line, so d3w deletes all three.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo', 'bar', 'baz' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('d3w')
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
     eq('', lines[1])
+  end)
+
+  it('d3w across lines with inner words stays on word boundaries', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo bar', 'baz bac' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('d3w')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('bac', lines[1])
   end)
 end)
 
