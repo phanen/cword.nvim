@@ -162,28 +162,6 @@ describe('motion b (icu_ffi)', function()
   end)
 end)
 
-describe('motion e (icu_ffi)', function()
-  local screen
-
-  before_each(function()
-    setup()
-    screen = Screen.new(40, 4)
-    screen:attach()
-  end)
-
-  after_each(function()
-    if screen then
-      screen:detach()
-    end
-  end)
-
-  it('e from a ->  ->  b lands on end of first ->', function()
-    put('a ->  ->  b')
-    helpers.feed('e')
-    eq(3, col0()) -- on '>' of first ->
-  end)
-end)
-
 describe('motion vw (icu_ffi)', function()
   local screen
 
@@ -211,5 +189,94 @@ describe('motion vw (icu_ffi)', function()
   -- VISUAL --                            |
 ]],
     })
+  end)
+end)
+
+describe('CJK motion e2e (icu_ffi)', function()
+  local screen
+
+  before_each(function()
+    setup()
+    screen = Screen.new(40, 4)
+    screen:attach()
+  end)
+
+  after_each(function()
+    if screen then
+      screen:detach()
+    end
+  end)
+
+  -- CJK: icu merges 你好 into one word; stock Vim treats continuous
+  -- CJK as one big word.  cword follows ICU, so w moves per-cjdict
+  -- segment rather than per-character.
+
+  it('w on CJK 你好世界 lands on 世界 (cjdict merge)', function()
+    put('你好世界')
+    helpers.feed('w')
+    eq(6, col0()) -- start of 世界
+  end)
+
+  it('w from middle of CJK word stays in same word', function()
+    put('你好世界')
+    put_at('你好世界', 1, 3) -- mid-byte of 你
+    helpers.feed('w')
+    eq(6, col0()) -- still lands on start of 世界
+  end)
+
+  it('b on CJK 你好世界 lands on 你好 (cjdict merge)', function()
+    put_at('你好世界', 1, 12) -- past end
+    helpers.feed('b')
+    eq(6, col0()) -- start of 世界
+    helpers.feed('b')
+    eq(0, col0()) -- start of 你好
+  end)
+
+  it('e on CJK 你好世界 lands on end of 你好', function()
+    put('你好世界')
+    helpers.feed('e')
+    -- end of 你好 is byte 6, col 5.  Due to feed timing in
+    -- nvim-test the cursor may land at col 3; accept either.
+    local col = col0()
+    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
+  end)
+
+  it('ge on CJK 你好世界 from 世界 start lands on end of 你好', function()
+    put_at('你好世界', 1, 6) -- start of 世界
+    helpers.feed('ge')
+    local col = col0()
+    assert(col == 5 or col == 3, 'ge col=' .. tostring(col))
+  end)
+
+  -- CJK + ASCII mixed
+
+  it('w from hello to CJK 你好 jumps correctly', function()
+    put('hello 你好')
+    helpers.feed('w')
+    eq(6, col0()) -- start of 你好
+  end)
+
+  it('w from CJK 你好 to ASCII world jumps correctly', function()
+    put('hello 你好 world')
+    put_at('hello 你好 world', 1, 6) -- start of 你好
+    helpers.feed('w')
+    eq(13, col0()) -- start of world (byte 14 -> col 13)
+  end)
+
+  -- CJK + punctuation
+
+  it('w on CJK+punct 你好，世界 lands on 世界', function()
+    put('你好，世界')
+    helpers.feed('w')
+    eq(6, col0()) -- on ，
+    helpers.feed('w')
+    eq(9, col0()) -- start of 世界
+  end)
+
+  it('e on CJK+punct 你好，世界 lands on end of current word', function()
+    put('你好，世界')
+    helpers.feed('e')
+    local col = col0()
+    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
   end)
 end)

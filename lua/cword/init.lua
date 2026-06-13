@@ -226,7 +226,7 @@ local function op_motion(method, direction)
         -- boundary: d deletes from cursor to just before the
         -- motion target.
         e_row, e_col = r - 1, math.max(0, c - 2)
-      elseif direction == 'end_forward' then
+      elseif direction == 'end_forward' or direction == 'end_backward' then
         -- end_forward returns byte_end (inclusive), so the visual
         -- end is byte_end - 1 to include the last character.
         e_row, e_col = r - 1, math.max(0, c - 1)

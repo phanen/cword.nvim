@@ -84,17 +84,14 @@ end
 ---@return integer column of previous word end, or 1
 function M.end_backward(cut, line, cursor)
   cursor = clamp(line, cursor)
-  local inside, prev
+  local prev
   for _, t in ipairs(cut(line)) do
-    if t.byte_end < cursor then
+    if t.byte_end < cursor and not is_whitespace(t) then
       prev = t
-      if cursor <= t.byte_end then
-        inside = t
-      end
     end
-  end
-  if inside then
-    return inside.byte_end
+    if cursor <= t.byte_end then
+      break
+    end
   end
   return (prev or { byte_end = 1 }).byte_end
 end

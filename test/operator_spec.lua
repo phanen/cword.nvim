@@ -182,6 +182,54 @@ describe('operator-pending mode', function()
     eq(1, #lines)
     eq('bac', lines[1])
   end)
+
+  -- CJK operator-pending
+
+  it('dw on CJK 你好世界 deletes 你好', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('cw on CJK 你好世界 changes 你好 and enters insert', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
+    eq('i', mode:sub(1, 1))
+  end)
+
+  it('de on CJK 你好世界 deletes to end of 你好', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('db on CJK 你好世界 from 世界 deletes 你好', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('db')
+    eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  -- CJK + ASCII mixed operator-pending
+
+  it('dw on CJK+ASCII 你好 hello 世界 from 你好 deletes 你好+space', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 hello 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('hello 世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dw from middle CJK+ASCII only deletes from cursor', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 hello 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 3 }) -- inside 你好
+    helpers.feed('dw')
+    eq('你hello 世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
 end)
 
 -- icu_ffi segments "你好" as one word (cjdict merge). The operator
