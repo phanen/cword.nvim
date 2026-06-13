@@ -257,18 +257,14 @@ describe('CJK motion e2e (icu_ffi)', function()
   it('e on CJK 你好世界 lands on end of 你好', function()
     put('你好世界')
     helpers.feed('e')
-    -- Due to nvim-test feed timing with CJK multi-byte chars,
-    -- the cursor may read back as col 3 instead of the actual
-    -- col 5.  The handler itself sets col 5 correctly.
-    local col = col0()
-    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
+    -- end of 你好 is the first byte of 好 = col 3.
+    eq(3, col0())
   end)
 
   it('ge on CJK 你好世界 from 世界 start lands on end of 你好', function()
     put_at('你好世界', 1, 6)
     helpers.feed('ge')
-    local col = col0()
-    assert(col == 5 or col == 3, 'ge col=' .. tostring(col))
+    eq(3, col0())
   end)
 
   -- CJK + punctuation: e moves (not stuck)
@@ -276,8 +272,7 @@ describe('CJK motion e2e (icu_ffi)', function()
   it('e on 你好，世界 lands on end of 你好', function()
     put('你好，世界')
     helpers.feed('e')
-    local col = col0()
-    assert(col == 5 or col == 3, 'e col=' .. tostring(col))
+    eq(3, col0())
   end)
 
   -- CJK + ASCII mixed
@@ -297,5 +292,35 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(6, col0()) -- on ，
     helpers.feed('w')
     eq(9, col0()) -- start of 世界
+  end)
+
+  -- cross-line e / ge
+
+  it('e wraps to next line on CJK', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 12 }) -- EOL
+    helpers.feed('e')
+    eq(2, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]'))
+    eq(3, col0()) -- end of 你好 on line 2
+  end)
+
+  it('e advances across CJK lines without getting stuck', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('e') -- (1,3) end of 你好
+    eq(3, col0())
+    helpers.feed('e') -- (1,9) end of 世界
+    eq(9, col0())
+    helpers.feed('e') -- wrap to (2,3) end of 你好 on line 2
+    eq(3, col0())
+    eq(2, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]'))
+  end)
+
+  it('ge wraps to previous line on CJK', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 }) -- BOL line 2
+    helpers.feed('ge')
+    eq(1, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]'))
+    eq(9, col0()) -- end of 世界 on line 1
   end)
 end)

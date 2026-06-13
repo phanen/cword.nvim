@@ -14,10 +14,8 @@ local M = {}
 M.Segmenter = require('cword.segmenter')
 M.motion = require('cword.motion')
 
--- Lazy-init state. _cut is the cut() function from the icu_ffi
--- segmenter; it is bound on the first call to setup() or to any
--- move_* handler.
-local _cut
+-- Bound at require-time; no lazy-init needed.
+local _cut = M.Segmenter.cut
 
 ---@param tok table
 ---@return boolean
@@ -25,24 +23,18 @@ local function is_whitespace(tok)
   return tok.text:match('^%s+$') ~= nil
 end
 
-function M.setup(opts)
-  if _cut then
-    return
-  end
-  _cut = M.Segmenter.cut
-end
+-- No-op kept for backward compatibility with existing configs.
+function M.setup() end
 
 -- Wrap-aware cursor mover used by all four directions. `direction` is
 -- 'forward' | 'backward' | 'end_forward' | 'end_backward'.
 local function cursor_move(method, direction)
   local is_fwd = direction == 'forward'
   local is_bwd = direction == 'backward'
+  local is_end_fwd = direction == 'end_forward'
+  local is_end_bwd = direction == 'end_backward'
 
   return function()
-    if not _cut then
-      M.setup()
-    end
-
     local win = vim.api.nvim_get_current_win()
     local count = math.max(1, vim.v.count1)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
@@ -104,10 +96,101 @@ local function cursor_move(method, direction)
         if not found then
           break
         end
+      elseif is_end_fwd and c >= #line then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r + 1, #lines do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          for _, t in ipairs(_cut(s)) do
+            if not is_whitespace(t) then
+              r, c = nr, t.byte_end
+              found = true
+              break
+            end
+          end
+          if found then
+            break
+          end
+        end
+        if not found then
+          break
+        end
+      elseif is_end_bwd and c <= 1 and col0 == 0 then
+        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+        local found = false
+        for nr = r - 1, 1, -1 do
+          local s = lines[nr]
+          if not s then
+            break
+          end
+          for _, t in ipairs(_cut(s)) do
+            if not is_whitespace(t) then
+              r, c = nr, t.byte_end
+              found = true
+            end
+          end
+          if found then
+            break
+          end
+        end
+        if not found then
+          break
+        end
       end
     end
 
-    vim.api.nvim_win_set_cursor(win, { r, math.max(0, c - 1) })
+    local new_col = math.max(0, c - 1)
+    -- Snap the column to a valid code-point start so that nvim
+    -- does not clamp it back to a different position on the next
+    -- read.  If the snap lands at or before the entry cursor,
+    -- nvim clamped us back; skip to the next token's char start.
+    if is_end_fwd or is_end_bwd then
+      local line = vim.api.nvim_get_current_line()
+      local sn = new_col + 1
+      local b = string.byte(line, sn)
+      while b and b >= 0x80 and b < 0xC0 do
+        sn = sn - 1
+        b = string.byte(line, sn)
+      end
+      new_col = sn - 1
+      if new_col <= col0 then
+        local toks = _cut(line)
+        if is_end_fwd then
+          for _, t in ipairs(toks) do
+            if t.byte_start > col0 + 1 and not is_whitespace(t) then
+              new_col = sn - 1
+              -- resnap t.byte_end
+              sn = t.byte_end
+              b = string.byte(line, sn)
+              while b and b >= 0x80 and b < 0xC0 do
+                sn = sn - 1
+                b = string.byte(line, sn)
+              end
+              new_col = sn - 1
+              break
+            end
+          end
+        else
+          for i = #toks, 1, -1 do
+            local t = toks[i]
+            if t.byte_end < col0 + 1 and not is_whitespace(t) then
+              sn = t.byte_end
+              b = string.byte(line, sn)
+              while b and b >= 0x80 and b < 0xC0 do
+                sn = sn - 1
+                b = string.byte(line, sn)
+              end
+              new_col = sn - 1
+              break
+            end
+          end
+        end
+      end
+    end
+    vim.api.nvim_win_set_cursor(win, { r, new_col })
   end
 end
 
@@ -134,9 +217,6 @@ M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
 -- trailing newline without grabbing line2.
 local function op_motion(method, direction)
   return function()
-    if not _cut then
-      M.setup()
-    end
     local count = math.max(1, vim.v.count1)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
     local r, c = row, col0 + 1
@@ -274,9 +354,6 @@ end
 -- skipped (the selection just extends the existing visual range).
 local function textobject(ai_type)
   return function()
-    if not _cut then
-      M.setup()
-    end
     local op = vim.v.operator
     local in_visual = (vim.api.nvim_get_mode().mode:sub(1, 1) == 'v')
 
@@ -393,9 +470,6 @@ M.textobject_a_word = textobject('a')
 local function insert_move(method, direction)
   local is_fwd = direction == 'forward' or direction == 'end_forward'
   return function()
-    if not _cut then
-      M.setup()
-    end
     local win = vim.api.nvim_get_current_win()
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
     local cursor = col0 + 1
@@ -472,9 +546,6 @@ M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
 
 -- Insert-mode delete word backward (<c-w>).
 M.insert_delete_word = function()
-  if not _cut then
-    M.setup()
-  end
   local win = vim.api.nvim_get_current_win()
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
   local cursor = col0 + 1
@@ -527,9 +598,6 @@ end
 -- Command-line mode word motions.
 
 M.cmdline_forward = function()
-  if not _cut then
-    M.setup()
-  end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.forward(_cut, line, pos)
@@ -539,9 +607,6 @@ M.cmdline_forward = function()
 end
 
 M.cmdline_backward = function()
-  if not _cut then
-    M.setup()
-  end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.backward(_cut, line, pos)
@@ -551,9 +616,6 @@ M.cmdline_backward = function()
 end
 
 M.cmdline_delete_word = function()
-  if not _cut then
-    M.setup()
-  end
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.backward(_cut, line, pos)

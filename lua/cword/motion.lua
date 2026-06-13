@@ -70,10 +70,19 @@ end
 ---@return integer column of next word end, or #line
 function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
+  -- If the cursor is inside a word, return that word's end.
+  -- Otherwise, return the end of the next word.
+  local first
   for _, t in ipairs(cut(line)) do
-    if t.byte_end > cursor and not is_whitespace(t) then
+    if t.byte_start <= cursor and t.byte_end > cursor and not is_whitespace(t) then
       return t.byte_end
     end
+    if not first and t.byte_start > cursor and not is_whitespace(t) then
+      first = t
+    end
+  end
+  if first then
+    return first.byte_end
   end
   return #line + 1
 end
