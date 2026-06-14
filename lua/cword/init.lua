@@ -395,16 +395,31 @@ local function op_motion(method, direction)
         -- cursor's line -- matching stock nvim's dge at BOL.
         s_row, s_col = r - 1, c
         e_row, e_col = row - 1, 0
-      elseif direction == 'end_forward' or direction == 'end_backward' then
-        -- end_forward: byte_end (inclusive), visual end = c - 1.
-        -- end_backward: byte_end of previous word; as a 0-indexed
-        -- column, c lands on the first byte AFTER that word
-        -- (always a char boundary), so use c directly.
-        if direction == 'end_backward' then
-          e_row, e_col = r - 1, c
-        else
-          e_row, e_col = r - 1, math.max(0, c - 1)
+      elseif direction == 'end_forward' then
+        -- end_forward returns byte_end (1-indexed, inclusive).
+        -- Convert to 0-indexed column by subtracting 1.
+        e_row, e_col = r - 1, math.max(0, c - 1)
+      elseif direction == 'end_backward' then
+        -- end_backward returns byte_end (1-indexed, inclusive) of
+        -- the previous word. Convert to 0-indexed by subtracting 1.
+        -- Snap to character boundary to avoid splitting multi-byte chars.
+        local target_col = math.max(0, c - 1)
+        if target_col > 0 and target_col < orig_line_len then
+          local sn = target_col + 1
+          local b = string.byte(orig_line, sn)
+          if b and b >= 0x80 and b < 0xC0 then
+            -- In the middle of a multi-byte char, snap backward
+            while sn > 1 do
+              sn = sn - 1
+              b = string.byte(orig_line, sn)
+              if b and b >= 0xC0 then
+                break
+              end
+            end
+            target_col = sn - 1
+          end
         end
+        e_row, e_col = r - 1, target_col
       else
         -- forward returns byte_start of the next word.
         e_row, e_col = r - 1, math.max(0, c - 2)
