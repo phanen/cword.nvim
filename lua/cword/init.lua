@@ -281,8 +281,9 @@ local function op_motion(method, direction)
           break
         end
       elseif direction == 'end_backward' and c <= 1 and col0 == 0 then
-        -- Stock nvim's ge from BOL wraps to the last character of
-        -- the previous non-empty line (not the last word's start).
+        -- Stock nvim's ge from BOL wraps to the previous line
+        -- (even if empty). For non-empty lines, target the start
+        -- of the last character. For empty lines, target col 0.
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r - 1, 1, -1 do
@@ -301,8 +302,10 @@ local function op_motion(method, direction)
               b = string.byte(s, sn)
             end
             r, c, found = nr, sn - 1, true
-            break
+          else
+            r, c, found = nr, 0, true
           end
+          break
         end
         if not found then
           break
@@ -313,20 +316,31 @@ local function op_motion(method, direction)
         -- stays at EOL.  Match that here for d2e/d3e parity.
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
+        local last_empty = nil
         for nr = r + 1, #lines do
           local s = lines[nr]
           if not s then
             break
           end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c, found = nr, t.byte_end, true
+          if #s == 0 then
+            -- Track empty lines for joining
+            last_empty = nr
+          else
+            for _, t in ipairs(_cut(s)) do
+              if not is_whitespace(t) then
+                r, c, found = nr, t.byte_end, true
+                break
+              end
+            end
+            if found then
               break
             end
           end
-          if found then
-            break
-          end
+        end
+        if not found and last_empty then
+          -- No non-whitespace token found, but there are empty
+          -- lines. Wrap to the last empty line to join them.
+          r, c, found = last_empty, 0, true
         end
         if not found then
           break
@@ -377,7 +391,8 @@ local function op_motion(method, direction)
           -- Use c - 1 as 0-indexed visual endpoint to land on the
           -- last byte of the target word (consistent with
           -- non-cross-line end_forward).
-          e_row, e_col = r - 1, math.max(0, c - 1)
+          -- Special case: if c = 0 (empty line), use 0 directly.
+          e_row, e_col = r - 1, (c == 0) and 0 or math.max(0, c - 1)
         else
           -- Cross-line forward: the visual end is on the target
           -- line at c - 2 (exclusive of the next word's first
