@@ -373,11 +373,11 @@ local function op_motion(method, direction)
       s_row, s_col = row - 1, col0
       if r > row then
         if direction == 'end_forward' then
-          -- Cross-line end_forward: c is byte_end (0-indexed,
-          -- position past the last byte of the target word).
-          -- With onemore, this is a valid cursor column and
-          -- never lands inside a multi-byte sequence.
-          e_row, e_col = r - 1, c
+          -- Cross-line end_forward: c is byte_end (1-indexed).
+          -- Use c - 1 as 0-indexed visual endpoint to land on the
+          -- last byte of the target word (consistent with
+          -- non-cross-line end_forward).
+          e_row, e_col = r - 1, math.max(0, c - 1)
         else
           -- Cross-line forward: the visual end is on the target
           -- line at c - 2 (exclusive of the next word's first

@@ -286,6 +286,124 @@ describe('operator-pending mode', function()
     eq(1, #lines)
     eq('hell', lines[1])
   end)
+
+  -- de at various single-line positions
+  it('de from start of word', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    eq(' world', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de from middle of word', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+    helpers.feed('de')
+    eq('he world', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de from last char of word (before space)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 })
+    helpers.feed('de')
+    -- cword's end_forward from 'o' (end of "hello" token) wraps to
+    -- next word "world" and deletes to its end.
+    eq('hell', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de from space between words', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 })
+    helpers.feed('de')
+    eq('hello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de from last char of line (EOL, single line)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 10 })
+    helpers.feed('de')
+    eq('hello worl', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  -- de cross-line at various positions
+  it('de cross-line from last char of line 1 (ASCII)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 })
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('hell', lines[1])
+  end)
+
+  it('de cross-line from last char of multi-word line (ASCII)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'foo bar' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 10 })
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('hello worl bar', lines[1])
+  end)
+
+  it('de cross-line from last char of multi-word line (CJK)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 你好', '你好 你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 12 })
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('你好 你 你好', lines[1])
+  end)
+
+  -- dge at various single-line positions
+  it('dge from middle of word', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 })
+    helpers.feed('dge')
+    -- cword's end_backward from 'r' (inside "world" token) goes to
+    -- end of previous token "hello" (col 4), deleting " w".
+    eq('hellorld', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dge from first char of word', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('dge')
+    eq('helloorld', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dge from space between words', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 })
+    helpers.feed('dge')
+    eq('helloworld', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dge from first char of line (no-op)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dge')
+    eq('hello world', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  -- dw at EOL
+  it('dw at EOL does not cross line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('hell', lines[1])
+    eq('world', lines[2])
+  end)
+
+  -- db at BOL
+  it('db at BOL wraps to previous line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 })
+    helpers.feed('db')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('world', lines[1])
+  end)
 end)
 
 -- icu_ffi segments "你好" as one word (cjdict merge). The operator
