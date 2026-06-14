@@ -95,11 +95,13 @@ function M.end_backward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local prev
   for _, t in ipairs(cut(line)) do
-    if t.byte_end < cursor and not is_whitespace(t) then
-      prev = t
-    end
     if cursor <= t.byte_end then
+      -- Cursor is inside (or at the last byte of) this token.
+      -- Skip it; we want the PREVIOUS word's end.
       break
+    end
+    if not is_whitespace(t) then
+      prev = t
     end
   end
   return (prev or { byte_end = 1 }).byte_end

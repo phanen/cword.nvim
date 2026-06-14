@@ -220,6 +220,8 @@ local function op_motion(method, direction)
     local count = math.max(1, vim.v.count1)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
     local r, c = row, col0 + 1
+    local orig_line = vim.api.nvim_get_current_line()
+    local orig_line_len = #orig_line
     for _ = 1, count do
       local line = vim.api.nvim_get_current_line()
       c = method(_cut, line, c)
@@ -279,6 +281,8 @@ local function op_motion(method, direction)
           break
         end
       elseif direction == 'end_backward' and c <= 1 and col0 == 0 then
+        -- Stock nvim's ge from BOL wraps to the last character of
+        -- the previous non-empty line (not the last word's start).
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r - 1, 1, -1 do
@@ -286,13 +290,17 @@ local function op_motion(method, direction)
           if not s then
             break
           end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_start
-              found = true
+          if #s > 0 then
+            -- Target the START of the last character on the line
+            -- so the visual endpoint is always on a char boundary.
+            local last_col = #s - 1
+            local sn = last_col + 1
+            local b = string.byte(s, sn)
+            while b and b >= 0x80 and b < 0xC0 do
+              sn = sn - 1
+              b = string.byte(s, sn)
             end
-          end
-          if found then
+            r, c, found = nr, sn - 1, true
             break
           end
         end
@@ -343,6 +351,25 @@ local function op_motion(method, direction)
         e_row, e_col = row - 1, math.max(0, col0 - 1)
       end
     else
+      -- For end_backward, snap col0 forward past the current
+      -- multi-byte character so the visual endpoint covers the
+      -- full character width (capped at line end - 1 to avoid
+      -- including the trailing newline).
+      if direction == 'end_backward' and col0 > 0 and col0 < orig_line_len then
+        local sn = col0 + 1
+        local b = string.byte(orig_line, sn)
+        if b and b >= 0xC0 then
+          sn = sn + 1
+          while sn <= orig_line_len do
+            b = string.byte(orig_line, sn)
+            if not b or b < 0x80 or b >= 0xC0 then
+              break
+            end
+            sn = sn + 1
+          end
+          col0 = math.min(sn - 1, orig_line_len - 1)
+        end
+      end
       s_row, s_col = row - 1, col0
       if r > row then
         if direction == 'end_forward' then
@@ -360,20 +387,24 @@ local function op_motion(method, direction)
           e_row, e_col = r - 1, math.max(0, c - 2)
         end
       elseif direction == 'end_backward' and r < row then
-        -- Cross-line end_backward: put both visual endpoints on
-        -- the target line (s_col = token byte_start - 1, e_col =
-        -- #line past EOL).  The virtual position at #line consumes
-        -- the trailing newline without grabbing the first char of
-        -- the cursor's line (same pattern as 'backward').
-        -- c is byte_start of the target token (set by the
-        -- cross-line wrapping block above).
-        local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        s_row, s_col = r - 1, math.max(0, c - 1)
-        e_row, e_col = r - 1, #(lines[r] or '')
+        -- Cross-line end_backward: visual from (target_line,
+        -- c) to (cursor_line, 0).  c is the char start of the
+        -- last character on the target line (set by the cross-
+        -- line wrapping block).  This captures the target char,
+        -- the trailing newline, and the first char of the
+        -- cursor's line -- matching stock nvim's dge at BOL.
+        s_row, s_col = r - 1, c
+        e_row, e_col = row - 1, 0
       elseif direction == 'end_forward' or direction == 'end_backward' then
-        -- end_forward returns byte_end (inclusive), so the visual
-        -- end is byte_end - 1 to include the last character.
-        e_row, e_col = r - 1, math.max(0, c - 1)
+        -- end_forward: byte_end (inclusive), visual end = c - 1.
+        -- end_backward: byte_end of previous word; as a 0-indexed
+        -- column, c lands on the first byte AFTER that word
+        -- (always a char boundary), so use c directly.
+        if direction == 'end_backward' then
+          e_row, e_col = r - 1, c
+        else
+          e_row, e_col = r - 1, math.max(0, c - 1)
+        end
       else
         -- forward returns byte_start of the next word.
         e_row, e_col = r - 1, math.max(0, c - 2)
