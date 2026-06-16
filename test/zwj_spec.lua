@@ -39,7 +39,9 @@ describe('ZWJ sequence handling', function()
     helpers.feed('e')
     eq(2, helpers.api.nvim_win_get_cursor(0)[2]) -- end of 'abc'
     helpers.feed('e')
-    eq(18, helpers.api.nvim_win_get_cursor(0)[2]) -- end of 'def' (skips ZWJ)
+    eq(3, helpers.api.nvim_win_get_cursor(0)[2]) -- start of emoji (ZWJ sequence)
+    helpers.feed('e')
+    eq(18, helpers.api.nvim_win_get_cursor(0)[2]) -- end of 'def'
   end)
 
   it('b skips over ZWJ sequences', function()
@@ -74,10 +76,11 @@ describe('ZWJ sequence handling', function()
     helpers.feed('e')
     eq(3, helpers.api.nvim_win_get_cursor(0)[2]) -- end of 'test'
     helpers.feed('e')
-    -- Should land at end of line (after ZWJ sequence)
-    local col = helpers.api.nvim_win_get_cursor(0)[2]
-    local line = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
-    eq(#line - 1, col) -- at last byte of line
+    -- Should land at start of emoji (ZWJ sequence)
+    eq(4, helpers.api.nvim_win_get_cursor(0)[2])
+    helpers.feed('e')
+    -- Should stay at same position (already at end of line)
+    eq(4, helpers.api.nvim_win_get_cursor(0)[2])
   end)
 
   it('b handles ZWJ at start of line', function()

@@ -48,22 +48,8 @@ local function split_token_by_class(t)
       char_class = 'emoji'
       char_len = 2
     elseif byte < 0xF0 then
-      -- Check if this is a ZWJ (U+200D = E2 80 8D)
-      if byte == 0xE2 and i + 2 <= t.byte_end then
-        local byte2 = t.text:byte(i - t.byte_start + 2)
-        local byte3 = t.text:byte(i - t.byte_start + 3)
-        if byte2 == 0x80 and byte3 == 0x8D then
-          -- This is a ZWJ, treat it as part of the emoji class
-          char_class = 'emoji'
-          char_len = 3
-        else
-          char_class = 'emoji'
-          char_len = 3
-        end
-      else
-        char_class = 'emoji'
-        char_len = 3
-      end
+      char_class = 'emoji'
+      char_len = 3
     else
       char_class = 'emoji'
       char_len = 4
@@ -78,13 +64,13 @@ local function split_token_by_class(t)
       -- Class changed, emit the current token (without the new character)
       table.remove(current_text) -- Remove the new character
       if #current_text > 0 then
-        -- Set is_word_like based on the character class
-        local is_word = (current_class == 'ascii')
+        -- All non-whitespace tokens are word-like for motion purposes.
+        -- Nvim treats emoji as word characters for w/b/e/ge motions.
         table.insert(result, {
           text = table.concat(current_text),
           byte_start = current_start,
           byte_end = i - 1,
-          is_word_like = is_word,
+          is_word_like = true,
         })
       end
       -- Start a new token with the new character
@@ -98,13 +84,13 @@ local function split_token_by_class(t)
 
   -- Emit the last token
   if #current_text > 0 then
-    -- Set is_word_like based on the character class
-    local is_word = (current_class == 'ascii')
+    -- All non-whitespace tokens are word-like for motion purposes.
+    -- Nvim treats emoji as word characters for w/b/e/ge motions.
     table.insert(result, {
       text = table.concat(current_text),
       byte_start = current_start,
       byte_end = t.byte_end,
-      is_word_like = is_word,
+      is_word_like = true,
     })
   end
 
@@ -121,6 +107,14 @@ local function postprocess_tokens(tokens)
       for _, sub in ipairs(split) do
         table.insert(result, sub)
       end
+    elseif is_zwj(t) then
+      -- Mark ZWJ tokens as word-like so they're treated as part of the word
+      table.insert(result, {
+        text = t.text,
+        byte_start = t.byte_start,
+        byte_end = t.byte_end,
+        is_word_like = true,
+      })
     else
       table.insert(result, t)
     end
@@ -205,10 +199,10 @@ function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local tokens = postprocess_tokens(cut(line))
 
-  -- First, check if cursor is inside a word
+  -- First, check if cursor is inside a word (not at the start or end)
   for i, t in ipairs(tokens) do
     if
-      t.byte_start <= cursor
+      t.byte_start < cursor
       and t.byte_end > cursor
       and not is_whitespace(t)
       and t.is_word_like
@@ -230,7 +224,7 @@ function M.end_forward(cut, line, cursor)
   local i = 1
   while i <= #tokens do
     local t = tokens[i]
-    if t.byte_start > cursor then
+    if t.byte_start >= cursor then
       -- Skip whitespace
       if is_whitespace(t) then
         i = i + 1
@@ -242,12 +236,35 @@ function M.end_forward(cut, line, cursor)
         i = i + 1
       else
         -- Found a word token. Check if it's part of a ZWJ sequence.
-        local j = i
-        while j < #tokens and is_zwj(tokens[j + 1]) do
-          j = j + 2 -- Skip ZWJ and the following token
+        -- For ZWJ sequences, return the first byte (not the last),
+        -- because nvim treats the entire sequence as a single grapheme.
+        if i < #tokens and is_zwj(tokens[i + 1]) then
+          -- This is the start of a ZWJ sequence
+          if t.byte_start == cursor then
+            -- Cursor is already at the start of the ZWJ sequence,
+            -- skip to the end and find the next word
+            local j = i
+            while j < #tokens and is_zwj(tokens[j + 1]) do
+              j = j + 2 -- Skip ZWJ and the following token
+            end
+            i = j + 1
+          else
+            -- Return the first byte of the ZWJ sequence
+            return t.byte_start
+          end
+        -- Check if this token is preceded by a ZWJ (part of a ZWJ sequence)
+        elseif i > 1 and is_zwj(tokens[i - 1]) then
+          -- This is part of a ZWJ sequence, skip to the end of the sequence
+          local j = i
+          while j < #tokens and is_zwj(tokens[j + 1]) do
+            j = j + 2 -- Skip ZWJ and the following token
+          end
+          -- Return the first byte of the next word after the ZWJ sequence
+          i = j + 1
+        else
+          -- Regular word token, return its end
+          return t.byte_end
         end
-        -- Return the end of the last token in the sequence
-        return tokens[j].byte_end
       end
     else
       i = i + 1
