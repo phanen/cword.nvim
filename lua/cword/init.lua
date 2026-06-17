@@ -673,7 +673,6 @@ M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
 M.insert_delete_word = function()
   local win = vim.api.nvim_get_current_win()
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(win))
-  local cursor = col0 + 1
   local line = vim.api.nvim_get_current_line()
 
   -- Empty line at col 0: delete the newline, joining with the
@@ -688,35 +687,38 @@ M.insert_delete_word = function()
     return
   end
 
-  local target = M.motion.backward(_cut, line, cursor)
-  if target >= cursor then
+  -- Delete backwards: first skip whitespace, then delete word.
+  -- This matches Vim's built-in <c-w> behavior.
+  local eat_from = col0
+  
+  -- Phase 1: skip trailing whitespace
+  while eat_from > 0 do
+    local byte = line:byte(eat_from)
+    if byte ~= 32 and byte ~= 9 then
+      break
+    end
+    eat_from = eat_from - 1
+  end
+  
+  -- Phase 2: delete word (non-whitespace)
+  while eat_from > 0 do
+    local byte = line:byte(eat_from)
+    if byte == 32 or byte == 9 then
+      break
+    end
+    eat_from = eat_from - 1
+  end
+
+  if eat_from >= col0 then
     return
   end
 
-  -- Eat the word before cursor plus any following whitespace.
-  local toks = _cut(line)
-  local eat_to = col0 -- 0-indexed exclusive end
-  local seen_word = false
-  for _, t in ipairs(toks) do
-    if t.byte_start >= target then
-      if not seen_word then
-        if not is_whitespace(t) then
-          seen_word = true
-        end
-      elseif is_whitespace(t) then
-        eat_to = t.byte_end
-      else
-        break
-      end
-    end
-  end
-  local eat_from = target - 1
   local row1 = row - 1
   -- Yank into the small-delete register now, then schedule
   -- the buffer mutation with an undo breakpoint.
-  vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, eat_from, row1, eat_to, {})[1] or ''))
+  vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, eat_from, row1, col0, {})[1] or ''))
   vim.o.undolevels = vim.o.undolevels
-  vim.api.nvim_buf_set_text(0, row1, eat_from, row1, eat_to, { '' })
+  vim.api.nvim_buf_set_text(0, row1, eat_from, row1, col0, { '' })
   return
 end
 
@@ -743,10 +745,35 @@ end
 M.cmdline_delete_word = function()
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-  local target = M.motion.backward(_cut, line, pos)
-  if target < pos then
-    vim.fn.setcmdline(line:sub(1, target - 1) .. line:sub(pos), target)
+  
+  -- Delete backwards: first skip whitespace, then delete word.
+  -- This matches Vim's built-in <c-w> behavior.
+  local eat_from = pos - 1 -- Convert to 0-indexed
+  
+  -- Phase 1: skip trailing whitespace
+  while eat_from > 0 do
+    local byte = line:byte(eat_from)
+    if byte ~= 32 and byte ~= 9 then
+      break
+    end
+    eat_from = eat_from - 1
   end
+  
+  -- Phase 2: delete word (non-whitespace)
+  while eat_from > 0 do
+    local byte = line:byte(eat_from)
+    if byte == 32 or byte == 9 then
+      break
+    end
+    eat_from = eat_from - 1
+  end
+
+  if eat_from >= pos - 1 then
+    return
+  end
+
+  -- Convert back to 1-indexed for setcmdline
+  vim.fn.setcmdline(line:sub(1, eat_from) .. line:sub(pos), eat_from + 1)
 end
 
 -- Exposed for spec probing.
