@@ -84,4 +84,28 @@ describe('command-line mode', function()
     helpers.feed('<c-w>')
     expect_cmdline('cd', 0)
   end)
+
+  it('c-w at EOL with CJK text deletes last word', function()
+    -- Regression test: <c-w> at end of cmdline with CJK text should
+    -- delete only the last word, not the entire line.
+    helpers.feed(':你好世界')
+    helpers.feed('<c-w>')
+    expect_cmdline('你好', 6)
+  end)
+
+  it('c-w with CJK + space + ASCII deletes ASCII word', function()
+    -- Regression test: <c-w> should delete only the ASCII word,
+    -- not the CJK text before the space.
+    helpers.feed(':你好世界 h')
+    helpers.feed('<c-w>')
+    expect_cmdline('你好世界 ', 13)
+  end)
+
+  it('c-w with trailing whitespace deletes word + whitespace', function()
+    -- Regression test: <c-w> should skip trailing whitespace and
+    -- delete the word before it.
+    helpers.feed(':hello world   ')
+    helpers.feed('<c-w>')
+    expect_cmdline('hello ', 6)
+  end)
 end)

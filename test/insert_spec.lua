@@ -48,14 +48,12 @@ describe('insert mode', function()
     })
   end)
 
-  it('<c-w> in the middle of a line deletes word + trailing space', function()
-    -- "hello| world" -> c-w -> "world". Vim's built-in <c-w>
+  it('<c-w> in the middle of a line deletes word before cursor', function()
+    -- "hello |world" -> c-w -> "world". Vim's built-in <c-w>
     -- in insert mode eats the word before the cursor plus any
-    -- whitespace immediately after; the cursor lands at the
-    -- start of the surviving text (NOT at the end). The cword
-    -- handler matches that contract.
+    -- whitespace between the word and cursor.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- between "hello" and " world"
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- at space (0-indexed)
     helpers.feed('a')
     helpers.feed('<c-w>')
     local state = helpers.exec_lua(function()
@@ -151,6 +149,59 @@ describe('insert mode', function()
     local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
     eq(1, #lines)
     eq('abcabc', lines[1])
+  end)
+
+  it('<c-w> at EOL with CJK text deletes last word', function()
+    -- Regression test: <c-w> at end of line with CJK text should
+    -- delete the last word. With space-separated CJK, it deletes
+    -- only the last word.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 世界' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
+    eq('你好 ', lines[1])
+  end)
+
+  it('<c-w> with CJK + space + ASCII deletes ASCII word', function()
+    -- Regression test: <c-w> should delete only the ASCII word,
+    -- not the CJK text before the space.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界 h' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
+    eq('你好世界 ', lines[1])
+  end)
+
+  it('<c-w> twice with CJK + space + ASCII deletes both', function()
+    -- Regression test: two <c-w> presses should delete the ASCII
+    -- word, then the space and CJK word.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界 h' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w><C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
+    eq('', lines[1])
+  end)
+
+  it('<c-w> with trailing whitespace deletes word + whitespace', function()
+    -- Regression test: <c-w> should skip trailing whitespace and
+    -- delete the word before it.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world   ' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
+    eq('hello ', lines[1])
   end)
 
   it('<m-f> wraps to the next line when there is no next word', function()

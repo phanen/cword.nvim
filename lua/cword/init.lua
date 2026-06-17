@@ -687,38 +687,65 @@ M.insert_delete_word = function()
     return
   end
 
-  -- Delete backwards: first skip whitespace, then delete word.
-  -- This matches Vim's built-in <c-w> behavior.
-  local eat_from = col0
+  -- Find the word before the cursor and delete it.
+  -- col0 is 0-indexed, byte positions are 1-indexed.
+  -- Stock nvim behavior: delete the word before cursor plus any
+  -- trailing whitespace between the word and cursor.
+  -- Stock nvim treats consecutive non-whitespace characters as a single word.
+  local tokens = _cut(line)
+  local word_start = nil
+  local delete_end = col0
   
-  -- Phase 1: skip trailing whitespace
-  while eat_from > 0 do
-    local byte = line:byte(eat_from)
-    if byte ~= 32 and byte ~= 9 then
-      break
+  -- First, skip any trailing whitespace before the cursor
+  local word_end_idx = nil
+  for i = #tokens, 1, -1 do
+    local t = tokens[i]
+    local t_end_0 = t.byte_end - 1
+    
+    if t_end_0 < col0 then
+      -- This token is before the cursor
+      if is_whitespace(t) then
+        -- Skip whitespace, continue looking for word
+      else
+        -- Found a non-whitespace token, this is the end of the word
+        word_end_idx = i
+        word_start = t.byte_start - 1
+        break
+      end
+    elseif t.byte_start - 1 < col0 and t_end_0 >= col0 then
+      -- Cursor is inside this token
+      if not is_whitespace(t) then
+        -- This is the end of the word
+        word_end_idx = i
+        word_start = t.byte_start - 1
+        break
+      end
     end
-    eat_from = eat_from - 1
   end
   
-  -- Phase 2: delete word (non-whitespace)
-  while eat_from > 0 do
-    local byte = line:byte(eat_from)
-    if byte == 32 or byte == 9 then
-      break
-    end
-    eat_from = eat_from - 1
-  end
-
-  if eat_from >= col0 then
+  if word_start == nil then
     return
   end
+  
+  -- Now, merge consecutive non-whitespace tokens backwards
+  for i = word_end_idx - 1, 1, -1 do
+    local t = tokens[i]
+    if is_whitespace(t) then
+      -- Stop at whitespace
+      break
+    else
+      -- Merge this token into the word
+      word_start = t.byte_start - 1
+    end
+  end
 
+  -- Delete from word_start to col0 (including any whitespace between the word and cursor)
   local row1 = row - 1
   -- Yank into the small-delete register now, then schedule
   -- the buffer mutation with an undo breakpoint.
-  vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, eat_from, row1, col0, {})[1] or ''))
+  vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, word_start, row1, delete_end, {})[1] or ''))
   vim.o.undolevels = vim.o.undolevels
-  vim.api.nvim_buf_set_text(0, row1, eat_from, row1, col0, { '' })
+  vim.api.nvim_buf_set_text(0, row1, word_start, row1, delete_end, { '' })
   return
 end
 
@@ -746,34 +773,41 @@ M.cmdline_delete_word = function()
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
   
-  -- Delete backwards: first skip whitespace, then delete word.
-  -- This matches Vim's built-in <c-w> behavior.
-  local eat_from = pos - 1 -- Convert to 0-indexed
+  -- pos is 1-indexed and points to the cursor position.
+  -- We want to delete the word before the cursor.
+  local tokens = _cut(line)
+  local target = pos - 1  -- 0-indexed position to delete from
   
-  -- Phase 1: skip trailing whitespace
-  while eat_from > 0 do
-    local byte = line:byte(eat_from)
-    if byte ~= 32 and byte ~= 9 then
-      break
+  -- Find the word before the cursor
+  for i = #tokens, 1, -1 do
+    local t = tokens[i]
+    if t.byte_end < pos then
+      -- Token is before cursor
+      if is_whitespace(t) then
+        -- Skip whitespace
+        target = t.byte_start - 1
+      else
+        -- Found a word, delete from its start
+        target = t.byte_start - 1
+        break
+      end
+    elseif t.byte_start < pos and t.byte_end >= pos then
+      -- Cursor is inside this token
+      if not is_whitespace(t) then
+        -- Delete from start of this word to cursor
+        target = t.byte_start - 1
+        break
+      end
     end
-    eat_from = eat_from - 1
   end
   
-  -- Phase 2: delete word (non-whitespace)
-  while eat_from > 0 do
-    local byte = line:byte(eat_from)
-    if byte == 32 or byte == 9 then
-      break
-    end
-    eat_from = eat_from - 1
-  end
-
-  if eat_from >= pos - 1 then
+  if target >= pos - 1 then
     return
   end
 
-  -- Convert back to 1-indexed for setcmdline
-  vim.fn.setcmdline(line:sub(1, eat_from) .. line:sub(pos), eat_from + 1)
+  -- target is 0-indexed, pos is 1-indexed.
+  -- Delete from target+1 to pos-1 (inclusive) in 1-indexed terms.
+  vim.fn.setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
 end
 
 -- Exposed for spec probing.
