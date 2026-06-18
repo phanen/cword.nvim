@@ -327,10 +327,11 @@ local function op_motion(method, direction)
         if not found then
           break
         end
-      elseif direction == 'end_backward' and c <= 1 and col0 == 0 then
-        -- Stock nvim's ge from BOL wraps to the previous line
-        -- (even if empty). For non-empty lines, target the start
-        -- of the last character. For empty lines, target col 0.
+      elseif direction == 'end_backward' and c <= 1 then
+        -- Stock nvim's ge from the end of the first word (or
+        -- from BOL) wraps to the previous line (even if empty).
+        -- For non-empty lines, target the start of the last
+        -- character. For empty lines, target col 0.
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r - 1, 1, -1 do
