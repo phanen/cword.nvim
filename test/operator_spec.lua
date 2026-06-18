@@ -417,6 +417,41 @@ describe('operator-pending mode', function()
     eq('你好 你 你好', lines[1])
   end)
 
+  it('de from non-last char of last word stays on current line (ASCII)', function()
+    -- Cursor on 'a' of 'abc' (first line); line 2 also has 'abc'.
+    -- de should delete to the end of 'abc' on line 1, not cross
+    -- to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 }) -- on 'a' of 'abc'
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('你好 ', lines[1])
+    eq('abc', lines[2])
+  end)
+
+  it('de from middle char of last word stays on current line (ASCII)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 8 }) -- on 'b' of 'abc'
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('你好 a', lines[1])
+    eq('abc', lines[2])
+  end)
+
+  it('de from non-last char of last CJK word stays on current line', function()
+    -- 你好世界: cursor on 你 (first char of 你好). de should
+    -- delete to the end of 你好, not cross to next line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- on '你'
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('世界', lines[1])
+    eq('你好', lines[2])
+  end)
+
   -- dge at various single-line positions
   it('dge from middle of word', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
