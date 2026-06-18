@@ -101,6 +101,23 @@ local function cursor_move(method, direction)
           c = #line
           break
         end
+        -- If the cursor was on a whitespace token and the motion
+        -- already advanced c to the end of a following word on the
+        -- same line, do not wrap. The motion return value c is
+        -- byte_end of that word (which equals #line for the last
+        -- word), so we can detect this by checking c < #line + 1.
+        if c < #line + 1 then
+          local on_ws = false
+          for _, t in ipairs(_cut(line)) do
+            if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 and is_whitespace(t) then
+              on_ws = true
+              break
+            end
+          end
+          if on_ws then
+            break
+          end
+        end
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r + 1, #lines do
@@ -732,31 +749,29 @@ M.insert_delete_word = function()
     return
   end
 
-  -- Now, merge consecutive non-whitespace tokens backwards,
-  -- but stop at CJK character boundaries (each CJK char is a word)
+  -- Now, merge consecutive ASCII word-like tokens backwards.
+  -- Stop at whitespace, at non-word-like tokens (e.g. '-' when it
+  -- is not in iskeyword), and at CJK boundaries. This matches
+  -- stock nvim's <C-w> which treats each cjdict segment and each
+  -- ASCII run as a separate word.
   for i = word_end_idx - 1, 1, -1 do
     local t = tokens[i]
     if is_whitespace(t) then
-      -- Stop at whitespace
+      break
+    elseif not t.is_word_like then
       break
     else
-      -- Check if this token contains CJK characters
       local has_cjk = false
       for j = t.byte_start, t.byte_end do
-        local byte = line:byte(j)
-        if byte >= 0x80 then
+        if line:byte(j) >= 0x80 then
           has_cjk = true
           break
         end
       end
-
       if has_cjk then
-        -- Stop at CJK boundary (don't merge CJK tokens)
         break
-      else
-        -- Merge this ASCII token into the word
-        word_start = t.byte_start - 1
       end
+      word_start = t.byte_start - 1
     end
   end
 

@@ -53,4 +53,52 @@ describe('user reported issues - detailed', function()
     eq(1, cursor[1]) -- should stay on line 1
     eq(1, cursor[2]) -- should be at 'a'
   end)
+
+  it('issue 4: e from space mid-line with CJK+ASCII should go to next word end', function()
+    -- Cursor on the space between 你好 and a on line 1; line 2 has
+    -- a single-char word. 'e' should land on the end of 'a' on
+    -- line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 }) -- on the space
+    helpers.feed('e')
+    local cursor = helpers.api.nvim_win_get_cursor(0)
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(7, cursor[2]) -- end of 'a'
+  end)
+
+  it('issue 5: e from space mid-line with ASCII should go to next word end', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'foo' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- on the space
+    helpers.feed('e')
+    local cursor = helpers.api.nvim_win_get_cursor(0)
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(10, cursor[2]) -- end of 'world'
+  end)
+
+  it('issue 6: <c-w> with abc-def should delete only the last word', function()
+    -- '-' is not in the default iskeyword, so each ASCII run is
+    -- its own word. <C-w> should delete only 'def' (plus any
+    -- trailing whitespace), not the whole 'abc-def'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc-def' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('abc-', line)
+  end)
+
+  it('issue 7: <c-w> with CJK-ASCII mixed respects word boundaries', function()
+    -- 你好-a: the '-' is not word-like, so <C-w> deletes only the
+    -- ASCII 'a' (plus any trailing whitespace), leaving '你好-'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好-a' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('你好-', line)
+  end)
 end)
