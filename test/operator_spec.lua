@@ -481,6 +481,32 @@ describe('operator-pending mode', function()
     eq('hello world', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
+  it('dge from end of CJK word on line 2 should match stock nvim', function()
+    -- Cursor on the first 好 of the second line (col 3).
+    -- Stock nvim: dge is a no-op (cursor is already at the end
+    -- of 你好 on this line, ge stays put).
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 3 })
+    helpers.feed('dge')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('123', lines[1])
+    eq('你好 你好', lines[2])
+  end)
+
+  it('dge from end of CJK word on line 2 with trailing space', function()
+    -- Cursor on the first 好 of the second line (col 3).
+    -- With trailing space, ge should still stay (cursor is at
+    -- end of 你好). dge should be a no-op.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好 ' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 3 })
+    helpers.feed('dge')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('123', lines[1])
+    eq('你好 你好 ', lines[2])
+  end)
+
   -- dw at EOL
   it('dw at EOL does not cross line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })

@@ -316,6 +316,11 @@ function M.end_backward(cut, line, cursor)
             break
           end
         end
+      elseif cursor > t.byte_start then
+        -- Cursor is strictly inside the first word (not at its
+        -- start byte). There is no previous word on this line;
+        -- stay put so ge/dge is a no-op (matching stock nvim).
+        return cursor
       end
       break
     end
