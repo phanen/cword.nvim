@@ -483,14 +483,13 @@ describe('operator-pending mode', function()
 
   it('dge from end of CJK word on line 2 should match stock nvim', function()
     -- Cursor on the first 好 of the second line (col 3).
-    -- Stock nvim: dge from the end of the first word (你 in
-    -- stock nvim's segmentation) crosses to the previous line
-    -- and deletes back to the end of the last word there.
-    -- cword with cjdict merge treats 你好 as one word, but
-    -- dge still crosses to the previous line at its end.
+    -- Stock nvim: dge from the end of the first word crosses
+    -- to the previous line and deletes back to the end of the
+    -- last word there.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好' })
     helpers.api.nvim_win_set_cursor(0, { 2, 3 })
     helpers.feed('dge')
+    helpers.exec_lua(function() vim.wait(50) end)
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
     eq('12 你好', lines[1])
@@ -500,6 +499,7 @@ describe('operator-pending mode', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好 ' })
     helpers.api.nvim_win_set_cursor(0, { 2, 3 })
     helpers.feed('dge')
+    helpers.exec_lua(function() vim.wait(50) end)
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
     eq('12 你好 ', lines[1])
