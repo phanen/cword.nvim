@@ -101,4 +101,36 @@ describe('user reported issues - detailed', function()
     local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
     eq('你好-', line)
   end)
+
+  it('issue 8: e on non-last char of last word should go to last char', function()
+    -- Cursor on 'a' of 'abc' (first line); line 2 also has 'abc'.
+    -- 'e' should land on the end of 'abc' (col 9) on line 1, not
+    -- jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 }) -- on 'a' of 'abc'
+    helpers.feed('e')
+    local cursor = helpers.api.nvim_win_get_cursor(0)
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(9, cursor[2]) -- end of 'abc'
+  end)
+
+  it('issue 9: e on middle char of last word should go to last char', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 8 }) -- on 'b' of 'abc'
+    helpers.feed('e')
+    local cursor = helpers.api.nvim_win_get_cursor(0)
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(9, cursor[2]) -- end of 'abc'
+  end)
+
+  it('issue 10: e on CJK non-last char of last word should go to last char', function()
+    -- 你好世界: cursor on 你 (first char of 你好). 'e' should go
+    -- to the end of 你好 (start of 好, col 3), not jump to next line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- on '你'
+    helpers.feed('e')
+    local cursor = helpers.api.nvim_win_get_cursor(0)
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(3, cursor[2]) -- start of 好 (end of 你好)
+  end)
 end)

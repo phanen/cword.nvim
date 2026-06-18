@@ -199,24 +199,39 @@ function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local tokens = postprocess_tokens(cut(line))
 
-  -- First, check if cursor is inside a word (not at the start or end)
+  -- First, check if cursor is inside a word, including at the
+  -- start of a word. The end of a word is handled by the wrap
+  -- branch in init.lua (it should cross to the next line), so we
+  -- stop short of byte_end here.
   for i, t in ipairs(tokens) do
     if
-      t.byte_start < cursor
+      t.byte_start <= cursor
       and t.byte_end > cursor
       and not is_whitespace(t)
       and t.is_word_like
     then
-      -- Cursor is inside this token. Check if it's part of a ZWJ sequence.
-      local end_pos = t.byte_end
-      while i < #tokens and is_zwj(tokens[i + 1]) do
-        i = i + 1
-        if i < #tokens then
-          i = i + 1
-          end_pos = tokens[i].byte_end
+      -- If this token is the start of a ZWJ sequence and the
+      -- cursor is at the very start, skip past the whole sequence
+      -- and find the next word (nvim treats the sequence as a
+      -- single grapheme, so e from the first byte should land on
+      -- the next word, not on the last byte of the first part).
+      if i < #tokens and is_zwj(tokens[i + 1]) and t.byte_start == cursor then
+        local j = i
+        while j < #tokens and is_zwj(tokens[j + 1]) do
+          j = j + 2
         end
+        i = j + 1
+      else
+        local end_pos = t.byte_end
+        while i < #tokens and is_zwj(tokens[i + 1]) do
+          i = i + 1
+          if i < #tokens then
+            i = i + 1
+            end_pos = tokens[i].byte_end
+          end
+        end
+        return end_pos
       end
-      return end_pos
     end
   end
 

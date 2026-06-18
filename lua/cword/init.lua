@@ -101,21 +101,46 @@ local function cursor_move(method, direction)
           c = #line
           break
         end
-        -- If the cursor was on a whitespace token and the motion
-        -- already advanced c to the end of a following word on the
-        -- same line, do not wrap. The motion return value c is
-        -- byte_end of that word (which equals #line for the last
-        -- word), so we can detect this by checking c < #line + 1.
+        -- If the motion already advanced c to the end of a word
+        -- on the same line, do not wrap. This happens when:
+        --   1. the cursor was on a whitespace token and the
+        --      motion found the next word, or
+        --   2. the cursor was inside a word (including at its
+        --      first byte) and the motion returned byte_end.
+        -- Exception: if the cursor is at the start of the last
+        -- character of the line, do wrap (vim's 'e' at the last
+        -- char crosses to the next line).
         if c < #line + 1 then
           local on_ws = false
+          local inside_word = false
           for _, t in ipairs(_cut(line)) do
-            if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 and is_whitespace(t) then
-              on_ws = true
-              break
+            if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 then
+              if is_whitespace(t) then
+                on_ws = true
+              elseif t.is_word_like and t.byte_end == c then
+                inside_word = true
+              end
             end
           end
           if on_ws then
             break
+          end
+          if inside_word then
+            -- Check if cursor is at the start of the last char
+            -- by finding the start of the last char and comparing.
+            local last_char_start = #line
+            while last_char_start > 1 do
+              local b = string.byte(line, last_char_start)
+              if b and (b < 0x80 or b >= 0xC0) then
+                break
+              end
+              last_char_start = last_char_start - 1
+            end
+            if col0 + 1 == last_char_start then
+              -- cursor is at the start of the last char, wrap
+            else
+              break
+            end
           end
         end
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
