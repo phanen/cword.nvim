@@ -97,6 +97,10 @@ local function cursor_move(method, direction)
           break
         end
       elseif is_end_fwd and c >= #line then
+        if col0 == 0 then
+          c = #line
+          break
+        end
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         local found = false
         for nr = r + 1, #lines do
@@ -148,9 +152,10 @@ local function cursor_move(method, direction)
     -- read.  If the snap lands at or before the entry cursor,
     -- nvim clamped us back; skip to the next token's char start.
     if is_end_fwd or is_end_bwd then
-      local line = vim.api.nvim_get_current_line()
+      local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
       local sn = new_col + 1
       local b = string.byte(line, sn)
+      -- Snap backwards to the start of the character
       while b and b >= 0x80 and b < 0xC0 do
         sn = sn - 1
         b = string.byte(line, sn)
@@ -727,15 +732,31 @@ M.insert_delete_word = function()
     return
   end
 
-  -- Now, merge consecutive non-whitespace tokens backwards
+  -- Now, merge consecutive non-whitespace tokens backwards,
+  -- but stop at CJK character boundaries (each CJK char is a word)
   for i = word_end_idx - 1, 1, -1 do
     local t = tokens[i]
     if is_whitespace(t) then
       -- Stop at whitespace
       break
     else
-      -- Merge this token into the word
-      word_start = t.byte_start - 1
+      -- Check if this token contains CJK characters
+      local has_cjk = false
+      for j = t.byte_start, t.byte_end do
+        local byte = line:byte(j)
+        if byte >= 0x80 then
+          has_cjk = true
+          break
+        end
+      end
+
+      if has_cjk then
+        -- Stop at CJK boundary (don't merge CJK tokens)
+        break
+      else
+        -- Merge this ASCII token into the word
+        word_start = t.byte_start - 1
+      end
     end
   end
 

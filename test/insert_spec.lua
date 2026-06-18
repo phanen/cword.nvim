@@ -178,9 +178,11 @@ describe('insert mode', function()
     eq('你好世界 ', lines[1])
   end)
 
-  it('<c-w> twice with CJK + space + ASCII deletes both', function()
+  it('<c-w> twice with CJK + space + ASCII deletes ASCII and trailing CJK token', function()
     -- Regression test: two <c-w> presses should delete the ASCII
-    -- word, then the space and CJK word.
+    -- word, then the trailing whitespace and the last CJK cjdict
+    -- token. <C-w> does not merge consecutive CJK tokens; each
+    -- cjdict token is deleted as a separate word.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界 h' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('A<C-w><C-w>')
@@ -188,7 +190,7 @@ describe('insert mode', function()
       vim.wait(50)
     end)
     local lines = helpers.exec_lua('return vim.api.nvim_buf_get_lines(0, 0, -1, false)')
-    eq('', lines[1])
+    eq('你好', lines[1])
   end)
 
   it('<c-w> with trailing whitespace deletes word + whitespace', function()
