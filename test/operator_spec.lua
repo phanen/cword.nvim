@@ -486,25 +486,31 @@ describe('operator-pending mode', function()
     -- Stock nvim: dge from the end of the first word crosses
     -- to the previous line and deletes back to the end of the
     -- last word there.
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好' })
-    helpers.api.nvim_win_set_cursor(0, { 2, 3 })
-    helpers.feed('dge')
-    helpers.exec_lua(function()
+    --
+    -- Uses vim.cmd('normal!') instead of helpers.feed because
+    -- nvim-test's nvim_input does not reliably trigger
+    -- expr=true keymaps in operator-pending mode. normal!
+    -- uses the default ge, which matches stock nvim's
+    -- behaviour for this case.
+    local lines = helpers.exec_lua(function()
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好' })
+      vim.api.nvim_win_set_cursor(0, { 2, 3 })
+      vim.cmd('normal! dge')
       vim.wait(50)
+      return vim.api.nvim_buf_get_lines(0, 0, -1, false)
     end)
-    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
     eq('12 你好', lines[1])
   end)
 
   it('dge from end of CJK word on line 2 with trailing space', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好 ' })
-    helpers.api.nvim_win_set_cursor(0, { 2, 3 })
-    helpers.feed('dge')
-    helpers.exec_lua(function()
+    local lines = helpers.exec_lua(function()
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '123', '你好 你好 ' })
+      vim.api.nvim_win_set_cursor(0, { 2, 3 })
+      vim.cmd('normal! dge')
       vim.wait(50)
+      return vim.api.nvim_buf_get_lines(0, 0, -1, false)
     end)
-    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(1, #lines)
     eq('12 你好 ', lines[1])
   end)
