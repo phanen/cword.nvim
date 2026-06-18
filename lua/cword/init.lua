@@ -45,7 +45,7 @@ local function cursor_move(method, direction)
       local line = vim.api.nvim_get_current_line()
       c = method(_cut, line, c)
 
-      if is_fwd and c >= #line then
+      if is_fwd and c > #line then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
         for nr = r + 1, #lines do
           local s = lines[nr]
@@ -695,13 +695,13 @@ M.insert_delete_word = function()
   local tokens = _cut(line)
   local word_start = nil
   local delete_end = col0
-  
+
   -- First, skip any trailing whitespace before the cursor
   local word_end_idx = nil
   for i = #tokens, 1, -1 do
     local t = tokens[i]
     local t_end_0 = t.byte_end - 1
-    
+
     if t_end_0 < col0 then
       -- This token is before the cursor
       if is_whitespace(t) then
@@ -722,11 +722,11 @@ M.insert_delete_word = function()
       end
     end
   end
-  
+
   if word_start == nil then
     return
   end
-  
+
   -- Now, merge consecutive non-whitespace tokens backwards
   for i = word_end_idx - 1, 1, -1 do
     local t = tokens[i]
@@ -743,7 +743,10 @@ M.insert_delete_word = function()
   local row1 = row - 1
   -- Yank into the small-delete register now, then schedule
   -- the buffer mutation with an undo breakpoint.
-  vim.fn.setreg('-', (vim.api.nvim_buf_get_text(0, row1, word_start, row1, delete_end, {})[1] or ''))
+  vim.fn.setreg(
+    '-',
+    (vim.api.nvim_buf_get_text(0, row1, word_start, row1, delete_end, {})[1] or '')
+  )
   vim.o.undolevels = vim.o.undolevels
   vim.api.nvim_buf_set_text(0, row1, word_start, row1, delete_end, { '' })
   return
@@ -772,12 +775,12 @@ end
 M.cmdline_delete_word = function()
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-  
+
   -- pos is 1-indexed and points to the cursor position.
   -- We want to delete the word before the cursor.
   local tokens = _cut(line)
-  local target = pos - 1  -- 0-indexed position to delete from
-  
+  local target = pos - 1 -- 0-indexed position to delete from
+
   -- Find the word before the cursor
   for i = #tokens, 1, -1 do
     local t = tokens[i]
@@ -800,7 +803,7 @@ M.cmdline_delete_word = function()
       end
     end
   end
-  
+
   if target >= pos - 1 then
     return
   end
