@@ -206,6 +206,60 @@ describe('insert mode', function()
     eq('hello ', lines[1])
   end)
 
+  it('<c-w> with consecutive CJK should delete only one cjdict token', function()
+    -- Regression: '你好你好 test' from mid-line deletes only the
+    -- second cjdict token (and the preceding space), leaving
+    -- '你好 test'. Each cjdict segment is its own <c-w> word.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好你好 test' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 }) -- after first 你好
+    helpers.feed('i<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('你好 test', line)
+  end)
+
+  it('<c-w> with 你好你好 should delete only one 你好', function()
+    -- Regression: from EOL of '你好你好', <c-w> deletes only the
+    -- second cjdict token, leaving '你好'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('你好', line)
+  end)
+
+  it('<c-w> with abc-def should delete only the last word', function()
+    -- '-' is not in the default iskeyword, so each ASCII run is
+    -- its own word. <C-w> should delete only 'def' (plus any
+    -- trailing whitespace), not the whole 'abc-def'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc-def' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('abc-', line)
+  end)
+
+  it('<c-w> with CJK-ASCII mixed respects word boundaries', function()
+    -- 你好-a: the '-' is not word-like, so <c-w> deletes only the
+    -- ASCII 'a' (plus any trailing whitespace), leaving '你好-'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好-a' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    helpers.exec_lua(function()
+      vim.wait(50)
+    end)
+    local line = helpers.exec_lua('return vim.api.nvim_get_current_line()')
+    eq('你好-', line)
+  end)
+
   it('<m-f> wraps to the next line when there is no next word', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc', 'abc' })
     helpers.api.nvim_win_set_cursor(0, { 1, 2 })

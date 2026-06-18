@@ -123,6 +123,28 @@ describe('motion w (icu_ffi)', function()
     helpers.feed('w')
     eq(0, col0()) -- on empty line
   end)
+
+  it('w from start of line with CJK should not jump to next line', function()
+    -- '你好 a' on line 1, 'b' on line 2. w from col 0 should
+    -- land on 'a' of line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('w')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(7, cursor[2]) -- should be at 'a'
+  end)
+
+  it('w from space should not jump to next line', function()
+    -- ' a' on line 1, 'b' on line 2. w from col 0 (on space)
+    -- should land on 'a' of line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { ' a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('w')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(1, cursor[2]) -- should be at 'a'
+  end)
 end)
 
 describe('motion b (icu_ffi)', function()
@@ -181,6 +203,28 @@ describe('motion e (icu_ffi)', function()
     put('a ->  ->  b')
     helpers.feed('e')
     eq(3, col0()) -- on '>' of first ->
+  end)
+
+  it('e from space should not jump to next line', function()
+    -- ' a' on line 1, 'b' on line 2. e from col 0 (on space)
+    -- should land on 'a' of line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { ' a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(1, cursor[2]) -- should be at 'a'
+  end)
+
+  it('e from space mid-line with ASCII should go to next word end', function()
+    -- 'hello world' on line 1, 'foo' on line 2. e from the space
+    -- should land on 'd' of 'world' on line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'foo' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- on the space
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(10, cursor[2]) -- end of 'world'
   end)
 end)
 
@@ -273,6 +317,64 @@ describe('CJK motion e2e (icu_ffi)', function()
     put('你好，世界')
     helpers.feed('e')
     eq(3, col0())
+  end)
+
+  -- CJK: e from col 0 should not jump to next line when there
+  -- is more content on the same line.
+
+  it('e from start of line with CJK should not jump to next line', function()
+    -- '你好 a' on line 1, 'b' on line 2. e from col 0 should
+    -- land on end of '你好' (col 3) on line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(3, cursor[2]) -- end of '你好'
+  end)
+
+  it('e from space mid-line with CJK+ASCII should go to next word end', function()
+    -- Cursor on the space between '你好' and 'a' on line 1;
+    -- line 2 has a single-char word. e should land on the end
+    -- of 'a' on line 1, not jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 a', 'b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 }) -- on the space
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(7, cursor[2]) -- end of 'a'
+  end)
+
+  it('e on non-last char of last word should go to last char', function()
+    -- Cursor on 'a' of 'abc' (first line); line 2 also has 'abc'.
+    -- e should land on the end of 'abc' (col 9) on line 1, not
+    -- jump to line 2.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 7 }) -- on 'a' of 'abc'
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(9, cursor[2]) -- end of 'abc'
+  end)
+
+  it('e on middle char of last word should go to last char', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好 abc', 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 8 }) -- on 'b' of 'abc'
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(9, cursor[2]) -- end of 'abc'
+  end)
+
+  it('e on CJK non-last char of last word should go to last char', function()
+    -- 你好世界: cursor on 你 (first char of 你好). e should go
+    -- to the end of 你好 (start of 好, col 3), not jump to next line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- on '你'
+    helpers.feed('e')
+    local cursor = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)')
+    eq(1, cursor[1]) -- should stay on line 1
+    eq(3, cursor[2]) -- start of 好 (end of 你好)
   end)
 
   -- CJK + ASCII mixed
