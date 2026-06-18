@@ -453,15 +453,16 @@ local function op_motion(method, direction)
         e_row, e_col = row - 1, math.max(0, col0 - 1)
       end
     else
-      -- For end_backward, snap col0 forward past the current
-      -- multi-byte character so the visual endpoint covers the
-      -- full character width (capped at line end - 1 to avoid
-      -- including the trailing newline).
+      -- For end_backward, if col0 lands in the middle of a
+      -- multi-byte character, snap it forward to the end of that
+      -- character so the visual endpoint covers the full char
+      -- width (capped at line end - 1 to avoid including the
+      -- trailing newline). Only snap when the cursor is actually
+      -- inside a char (byte at col0+1 is a continuation byte).
       if direction == 'end_backward' and col0 > 0 and col0 < orig_line_len then
-        local sn = col0 + 1
-        local b = string.byte(orig_line, sn)
-        if b and b >= 0xC0 then
-          sn = sn + 1
+        local b = string.byte(orig_line, col0 + 1)
+        if b and b >= 0x80 and b < 0xC0 then
+          local sn = col0 + 2
           while sn <= orig_line_len do
             b = string.byte(orig_line, sn)
             if not b or b < 0x80 or b >= 0xC0 then
@@ -490,14 +491,14 @@ local function op_motion(method, direction)
           e_row, e_col = r - 1, math.max(0, c - 2)
         end
       elseif direction == 'end_backward' and r < row then
-        -- Cross-line end_backward: visual from (target_line,
-        -- c) to (cursor_line, 0).  c is the char start of the
-        -- last character on the target line (set by the cross-
-        -- line wrapping block).  This captures the target char,
-        -- the trailing newline, and the first char of the
-        -- cursor's line -- matching stock nvim's dge at BOL.
-        s_row, s_col = r - 1, c
-        e_row, e_col = row - 1, 0
+        -- Cross-line end_backward: visual from the cursor
+        -- (s_row, s_col are already set to row-1, col0 above)
+        -- to the motion target on the previous line. With
+        -- virtualedit=onemore the cursor at e_col+1 includes
+        -- the target char, so the delete covers from the cursor
+        -- through the end of the target word, plus the newline.
+        -- This matches stock nvim's dge cross-line behaviour.
+        e_row, e_col = r - 1, c
       elseif direction == 'end_forward' then
         -- end_forward returns byte_end (1-indexed, inclusive).
         -- Convert to 0-indexed column by subtracting 1.
