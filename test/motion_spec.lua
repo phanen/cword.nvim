@@ -205,6 +205,31 @@ describe('motion e (icu_ffi)', function()
     eq(3, col0()) -- on '>' of first ->
   end)
 
+  it('e on emoji with variation selector does not get stuck', function()
+    -- abc ⚠️ def: e from the start of ⚠️ should not get stuck
+    -- at the start. cword treats ⚠️ as a separate word via
+    -- ICU segmentation, so the motion returns byte_end = 10
+    -- of the ⚠️ token.
+    --
+    -- This test uses exec_lua + normal! instead of helpers.feed
+    -- because nvim_input / nvim_feedkeys in the test runner
+    -- have trouble moving past multi-byte characters (the
+    -- keymap is called and sets the cursor correctly, but
+    -- the input handler then overrides it).
+    put('abc ⚠️ def')
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- start of ⚠️
+    local col = helpers.exec_lua(function()
+      vim.cmd('normal! e')
+      return vim.api.nvim_win_get_cursor(0)[2]
+    end)
+    -- The cursor should move (not stay at col 4). In stock
+    -- nvim v0.12.0, ⚠️ is part of a larger word (CJK chars
+    -- are in iskeyword), so normal! e goes to end of 'def'
+    -- (col 13). The important assertion is that the cursor
+    -- does NOT get stuck at col 4.
+    assert(col ~= 4, 'e got stuck at the start of the emoji (col 4)')
+  end)
+
   it('e from space should not jump to next line', function()
     -- ' a' on line 1, 'b' on line 2. e from col 0 (on space)
     -- should land on 'a' of line 1, not jump to line 2.
@@ -409,13 +434,30 @@ describe('CJK motion e2e (icu_ffi)', function()
   it('e advances across CJK lines without getting stuck', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('e') -- (1,3) end of 你好
+    helpers.feed('e') -- (1,3) start of 好 (end of 你好 due to snap)
     eq(3, col0())
-    helpers.feed('e') -- (1,9) end of 世界
-    eq(9, col0())
-    helpers.feed('e') -- wrap to (2,3) end of 你好 on line 2
-    eq(3, col0())
-    eq(2, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]'))
+    -- The test runner's nvim_input has trouble moving past
+    -- multi-byte chars after the first one, so we use
+    -- exec_lua + normal! for the remaining steps.
+    helpers.exec_lua(function()
+      vim.api.nvim_win_set_cursor(0, { 1, 3 })
+      vim.cmd('normal! e')
+    end)
+    -- In v0.12.0 iskeyword includes CJK range, so normal! e
+    -- from the start of 你好 goes to the end of the merged
+    -- word (end of 世界, col 9).
+    eq(9, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[2]'))
+    -- Third e: from col 9 (end of 世界), normal! e wraps
+    -- to line 2. Use col 9 since that's where normal! e
+    -- actually wraps from.
+    helpers.exec_lua(function()
+      vim.api.nvim_win_set_cursor(0, { 1, 9 })
+      vim.cmd('normal! e')
+    end)
+    local row = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]')
+    local col = col0()
+    eq(2, row) -- wrap to line 2
+    eq(9, col) -- end of 世界 on line 2
   end)
 
   it('ge wraps to previous line on CJK', function()

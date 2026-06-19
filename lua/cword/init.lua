@@ -197,10 +197,17 @@ local function cursor_move(method, direction)
       local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
       local sn = new_col + 1
       local b = string.byte(line, sn)
-      -- Snap backwards to the start of the character
-      while b and b >= 0x80 and b < 0xC0 do
+      local next_b = string.byte(line, sn + 1)
+      -- Snap backwards to the start of the character. Only snap
+      -- when the cursor is in the middle of a multi-byte char
+      -- (current byte is a continuation byte AND the next byte
+      -- is also a continuation byte or doesn't exist). If the
+      -- next byte is a start byte or ASCII, the cursor is at
+      -- the end of a char, which is a valid boundary.
+      while b and b >= 0x80 and b < 0xC0 and next_b and next_b >= 0x80 and next_b < 0xC0 do
         sn = sn - 1
         b = string.byte(line, sn)
+        next_b = string.byte(line, sn + 1)
       end
       new_col = sn - 1
       if new_col <= col0 then
