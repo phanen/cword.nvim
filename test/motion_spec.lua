@@ -208,12 +208,10 @@ describe('motion e (icu_ffi)', function()
   it('e on emoji with variation selector does not get stuck', function()
     -- abc ⚠️ def: e from the start of ⚠️ should land on end
     -- of ⚠️ (col 9), not get stuck at the start.
-    --
-    -- The test runner's --embed mode has trouble with feed/normal
-    -- for multi-byte chars (the keymap is called and sets the
-    -- cursor correctly, but the input handler then overrides it).
-    -- Call move_end_forward directly via exec_lua and return the
-    -- cursor in the same call to avoid this.
+    -- Same input-layer workaround as the CJK test: call
+    -- move_end_forward directly via exec_lua to avoid the
+    -- --embed runner applying nvim's default `e` after the
+    -- keymap.
     put('abc ⚠️ def')
     helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- start of ⚠️
     local c = helpers.exec_lua(function()
@@ -426,11 +424,11 @@ describe('CJK motion e2e (icu_ffi)', function()
   end)
 
   it('e advances across CJK lines without getting stuck', function()
-    -- The test runner's --embed mode has trouble with feed/normal
-    -- for multi-byte chars (the keymap is called and sets the
-    -- cursor correctly, but the input handler then overrides it).
-    -- Call move_end_forward directly via exec_lua and return the
-    -- cursor in the same call to avoid this.
+    -- The test runner's --embed mode applies the keymap AND
+    -- nvim's default `e` together, so the cursor lands at an
+    -- intermediate snap position (col 3) instead of the
+    -- keymap's intended target. Call move_end_forward directly
+    -- via exec_lua to bypass the input layer.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     local r1 = helpers.exec_lua(function()
