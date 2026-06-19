@@ -434,30 +434,35 @@ describe('CJK motion e2e (icu_ffi)', function()
   it('e advances across CJK lines without getting stuck', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('e') -- (1,3) start of 好 (end of 你好 due to snap)
-    eq(3, col0())
-    -- The test runner's nvim_input has trouble moving past
-    -- multi-byte chars after the first one, so we use
-    -- exec_lua + normal! for the remaining steps.
-    helpers.exec_lua(function()
-      vim.api.nvim_win_set_cursor(0, { 1, 3 })
-      vim.cmd('normal! e')
+    -- The test runner's --embed mode processes input between
+    -- exec_lua calls, which can trigger the keymap and move
+    -- the cursor. To avoid this, we call cword.move_end_forward
+    -- directly and return the cursor in the same exec_lua call.
+    local r1 = helpers.exec_lua(function()
+      local cword = require('cword')
+      cword.move_end_forward()
+      return vim.api.nvim_win_get_cursor(0)
     end)
-    -- In v0.12.0 iskeyword includes CJK range, so normal! e
-    -- from the start of 你好 goes to the end of the merged
-    -- word (end of 世界, col 9).
-    eq(9, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[2]'))
-    -- Third e: from col 9 (end of 世界), normal! e wraps
-    -- to line 2. Use col 9 since that's where normal! e
-    -- actually wraps from.
-    helpers.exec_lua(function()
-      vim.api.nvim_win_set_cursor(0, { 1, 9 })
-      vim.cmd('normal! e')
+    eq(1, r1[1])
+    eq(5, r1[2]) -- end of 你好
+    local r2 = helpers.exec_lua(function()
+      -- Reset cursor to end of 你好 before calling move_end_forward
+      vim.api.nvim_win_set_cursor(0, { 1, 5 })
+      local cword = require('cword')
+      cword.move_end_forward()
+      return vim.api.nvim_win_get_cursor(0)
     end)
-    local row = helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]')
-    local col = col0()
-    eq(2, row) -- wrap to line 2
-    eq(9, col) -- end of 世界 on line 2
+    eq(1, r2[1])
+    eq(11, r2[2]) -- end of 世界
+    local r3 = helpers.exec_lua(function()
+      -- Reset cursor to end of 世界 before calling move_end_forward
+      vim.api.nvim_win_set_cursor(0, { 1, 11 })
+      local cword = require('cword')
+      cword.move_end_forward()
+      return vim.api.nvim_win_get_cursor(0)
+    end)
+    eq(2, r3[1]) -- wrap to line 2
+    eq(5, r3[2]) -- end of 你好 on line 2
   end)
 
   it('ge wraps to previous line on CJK', function()

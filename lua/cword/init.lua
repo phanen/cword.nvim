@@ -113,6 +113,7 @@ local function cursor_move(method, direction)
         if c < #line + 1 then
           local on_ws = false
           local inside_word = false
+          local motion_found_next = false
           for _, t in ipairs(_cut(line)) do
             if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 then
               if is_whitespace(t) then
@@ -121,8 +122,14 @@ local function cursor_move(method, direction)
                 inside_word = true
               end
             end
+            if t.is_word_like and t.byte_end == c and t.byte_start - 1 > col0 then
+              motion_found_next = true
+            end
           end
           if on_ws then
+            break
+          end
+          if motion_found_next then
             break
           end
           if inside_word then
