@@ -206,28 +206,22 @@ describe('motion e (icu_ffi)', function()
   end)
 
   it('e on emoji with variation selector does not get stuck', function()
-    -- abc ⚠️ def: e from the start of ⚠️ should not get stuck
-    -- at the start. cword treats ⚠️ as a separate word via
-    -- ICU segmentation, so the motion returns byte_end = 10
-    -- of the ⚠️ token.
+    -- abc ⚠️ def: e from the start of ⚠️ should land on end
+    -- of ⚠️ (col 9), not get stuck at the start.
     --
-    -- This test uses exec_lua + normal! instead of helpers.feed
-    -- because nvim_input / nvim_feedkeys in the test runner
-    -- have trouble moving past multi-byte characters (the
-    -- keymap is called and sets the cursor correctly, but
-    -- the input handler then overrides it).
+    -- The test runner's --embed mode has trouble with feed/normal
+    -- for multi-byte chars (the keymap is called and sets the
+    -- cursor correctly, but the input handler then overrides it).
+    -- Call move_end_forward directly via exec_lua and return the
+    -- cursor in the same call to avoid this.
     put('abc ⚠️ def')
     helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- start of ⚠️
-    local col = helpers.exec_lua(function()
-      vim.cmd('normal! e')
+    local c = helpers.exec_lua(function()
+      local cword = require('cword')
+      cword.move_end_forward()
       return vim.api.nvim_win_get_cursor(0)[2]
     end)
-    -- The cursor should move (not stay at col 4). In stock
-    -- nvim v0.12.0, ⚠️ is part of a larger word (CJK chars
-    -- are in iskeyword), so normal! e goes to end of 'def'
-    -- (col 13). The important assertion is that the cursor
-    -- does NOT get stuck at col 4.
-    assert(col ~= 4, 'e got stuck at the start of the emoji (col 4)')
+    eq(9, c) -- end of ⚠️
   end)
 
   it('e from space should not jump to next line', function()
@@ -432,12 +426,13 @@ describe('CJK motion e2e (icu_ffi)', function()
   end)
 
   it('e advances across CJK lines without getting stuck', function()
+    -- The test runner's --embed mode has trouble with feed/normal
+    -- for multi-byte chars (the keymap is called and sets the
+    -- cursor correctly, but the input handler then overrides it).
+    -- Call move_end_forward directly via exec_lua and return the
+    -- cursor in the same call to avoid this.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    -- The test runner's --embed mode processes input between
-    -- exec_lua calls, which can trigger the keymap and move
-    -- the cursor. To avoid this, we call cword.move_end_forward
-    -- directly and return the cursor in the same exec_lua call.
     local r1 = helpers.exec_lua(function()
       local cword = require('cword')
       cword.move_end_forward()
@@ -446,7 +441,6 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(1, r1[1])
     eq(5, r1[2]) -- end of 你好
     local r2 = helpers.exec_lua(function()
-      -- Reset cursor to end of 你好 before calling move_end_forward
       vim.api.nvim_win_set_cursor(0, { 1, 5 })
       local cword = require('cword')
       cword.move_end_forward()
@@ -455,7 +449,6 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(1, r2[1])
     eq(11, r2[2]) -- end of 世界
     local r3 = helpers.exec_lua(function()
-      -- Reset cursor to end of 世界 before calling move_end_forward
       vim.api.nvim_win_set_cursor(0, { 1, 11 })
       local cword = require('cword')
       cword.move_end_forward()
