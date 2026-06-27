@@ -222,8 +222,6 @@ local function cursor_move(method, direction)
         if is_end_fwd then
           for _, t in ipairs(toks) do
             if t.byte_start > col0 + 1 and not is_whitespace(t) then
-              new_col = sn - 1
-              -- resnap t.byte_end
               sn = t.byte_end
               b = string.byte(line, sn)
               while b and b >= 0x80 and b < 0xC0 do

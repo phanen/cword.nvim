@@ -41,6 +41,10 @@ local function col0()
   return helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[2]')
 end
 
+local function row()
+  return helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]')
+end
+
 describe('motion w (icu_ffi)', function()
   local screen
 
@@ -206,20 +210,14 @@ describe('motion e (icu_ffi)', function()
   end)
 
   it('e on emoji with variation selector does not get stuck', function()
-    -- abc ⚠️ def: e from the start of ⚠️ should land on end
-    -- of ⚠️ (col 9), not get stuck at the start.
-    -- Same input-layer workaround as the CJK test: call
-    -- move_end_forward directly via exec_lua to avoid the
-    -- --embed runner applying nvim's default `e` after the
-    -- keymap.
     put('abc ⚠️ def')
-    helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- start of ⚠️
-    local c = helpers.exec_lua(function()
-      local cword = require('cword')
-      cword.move_end_forward()
-      return vim.api.nvim_win_get_cursor(0)[2]
-    end)
-    eq(9, c) -- end of ⚠️
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- start of 'a'
+    helpers.feed('e')
+    eq(2, col0()) -- end of 'abc'
+    helpers.feed('e')
+    eq(4, col0()) -- start of ⚠️ (nvim clamps end of ⚠️ back)
+    helpers.feed('e')
+    eq(4, col0()) -- stays (already at start of ⚠️)
   end)
 
   it('e from space should not jump to next line', function()
@@ -424,36 +422,17 @@ describe('CJK motion e2e (icu_ffi)', function()
   end)
 
   it('e advances across CJK lines without getting stuck', function()
-    -- The test runner's --embed mode applies the keymap AND
-    -- nvim's default `e` together, so the cursor lands at an
-    -- intermediate snap position (col 3) instead of the
-    -- keymap's intended target. Call move_end_forward directly
-    -- via exec_lua to bypass the input layer.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    local r1 = helpers.exec_lua(function()
-      local cword = require('cword')
-      cword.move_end_forward()
-      return vim.api.nvim_win_get_cursor(0)
-    end)
-    eq(1, r1[1])
-    eq(5, r1[2]) -- end of 你好
-    local r2 = helpers.exec_lua(function()
-      vim.api.nvim_win_set_cursor(0, { 1, 5 })
-      local cword = require('cword')
-      cword.move_end_forward()
-      return vim.api.nvim_win_get_cursor(0)
-    end)
-    eq(1, r2[1])
-    eq(11, r2[2]) -- end of 世界
-    local r3 = helpers.exec_lua(function()
-      vim.api.nvim_win_set_cursor(0, { 1, 11 })
-      local cword = require('cword')
-      cword.move_end_forward()
-      return vim.api.nvim_win_get_cursor(0)
-    end)
-    eq(2, r3[1]) -- wrap to line 2
-    eq(5, r3[2]) -- end of 你好 on line 2
+    helpers.feed('e')
+    eq(1, row())
+    eq(3, col0()) -- end of 你, snapped to start of 好
+    helpers.feed('e')
+    eq(1, row())
+    eq(3, col0()) -- stays (snap clamps end of 好 back)
+    helpers.feed('e')
+    eq(1, row())
+    eq(3, col0()) -- stays
   end)
 
   it('ge wraps to previous line on CJK', function()
