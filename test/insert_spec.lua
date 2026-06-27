@@ -69,6 +69,12 @@ describe('insert mode', function()
     eq(0, state.cursor)
   end)
 
+  -- TODO: <c-w> at start of first word deletes leading whitespace
+  -- helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  hello' })
+  -- helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+  -- helpers.feed('i<c-w>')
+  -- eq('hello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+
   it('<m-f> moves forward one word', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })

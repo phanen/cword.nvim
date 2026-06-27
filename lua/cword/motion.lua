@@ -291,6 +291,23 @@ function M.end_forward(cut, line, cursor)
       elseif is_zwj(t) then
         i = i + 1
       else
+        -- Found a word token. If the cursor is at the start of a
+        -- single-byte word (cursor == byte_start == byte_end),
+        -- the cursor is also at the END of that word. Vim's e
+        -- from the end of a word advances to the end of the next
+        -- word. Return the end of the next word so operators like
+        -- de can compute the correct visual range.
+        if t.byte_start == cursor and t.byte_end == t.byte_start then
+          local j = i + 1
+          while j <= #tokens do
+            local nt = tokens[j]
+            if not is_whitespace(nt) and not is_zwj(nt) and nt.is_word_like then
+              return nt.byte_end
+            end
+            j = j + 1
+          end
+          return #line + 1
+        end
         -- Found a word token. Check if it's part of a ZWJ sequence.
         -- For ZWJ sequences, return the first byte (not the last),
         -- because nvim treats the entire sequence as a single grapheme.

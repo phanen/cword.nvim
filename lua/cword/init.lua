@@ -322,7 +322,7 @@ local function op_motion(method, direction)
       -- iteration that runs out of content stays at #line + 1
       -- (past the last character) without crossing the newline,
       -- matching stock Vim's operator-pending w semantics.
-      if direction == 'forward' and c >= #line then
+      if direction == 'forward' and c > #line then
         if _ < count then
           local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
           local found = false
@@ -403,6 +403,25 @@ local function op_motion(method, direction)
           break
         end
       elseif direction == 'end_forward' and c >= #line then
+        -- If the cursor was at the end of a single-byte word (e.g.
+        -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
+        -- word. Don't wrap to the next line in this case; stop at
+        -- end of current line so de doesn't eat the next line.
+        local cur_tok_at_cursor
+        for _, t in ipairs(_cut(line)) do
+          if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 and not is_whitespace(t) then
+            cur_tok_at_cursor = t
+            break
+          end
+        end
+        if
+          cur_tok_at_cursor
+          and cur_tok_at_cursor.byte_start == cur_tok_at_cursor.byte_end
+          and col0 + 1 == cur_tok_at_cursor.byte_end
+        then
+          c = #line
+          break
+        end
         -- TODO: count > 1 wraps on every iteration; the forward
         -- (w) wrap guards with `_ < count` so the final iteration
         -- stays at EOL.  Match that here for d2e/d3e parity.
@@ -546,7 +565,30 @@ local function op_motion(method, direction)
       elseif direction == 'end_forward' then
         -- end_forward returns byte_end (1-indexed, inclusive).
         -- Convert to 0-indexed column by subtracting 1.
-        e_row, e_col = r - 1, math.max(0, c - 1)
+        local target_col = math.max(0, c - 1)
+        -- If the cursor was at the end of a single-byte word (e.g.
+        -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
+        -- word. In that case the visual range should be exclusive
+        -- of the next word (matching stock Vim's de semantics):
+        -- e.g. `de` from 'a' in 'a b' deletes 'a ' (2 bytes),
+        -- not 'a b' (3 bytes).
+        local cur_tok_at_cursor
+        for _, t in ipairs(_cut(orig_line)) do
+          if t.byte_start <= col0 + 1 and col0 + 1 <= t.byte_end and not is_whitespace(t) then
+            cur_tok_at_cursor = t
+            break
+          end
+        end
+        if
+          cur_tok_at_cursor
+          and cur_tok_at_cursor.byte_end == col0 + 1
+          and cur_tok_at_cursor.byte_start == cur_tok_at_cursor.byte_end
+        then
+          -- Cursor was at the end of a single-byte word. Make
+          -- the range exclusive of the next word.
+          target_col = math.max(0, c - 2)
+        end
+        e_row, e_col = r - 1, target_col
       elseif direction == 'end_backward' then
         -- end_backward returns byte_end (1-indexed, inclusive) of
         -- the previous word. Convert to 0-indexed by subtracting 1.
@@ -857,7 +899,18 @@ M.insert_delete_word = function()
   end
 
   if word_start == nil then
-    return
+    -- No word found before the cursor. If the cursor is at the
+    -- start of a word (e.g. '  hello|' where cursor is at start
+    -- of 'hello'), delete the leading whitespace.
+    for _, t in ipairs(_cut(line)) do
+      if t.byte_start - 1 == col0 and not is_whitespace(t) then
+        word_start = 0
+        break
+      end
+    end
+    if word_start == nil then
+      return
+    end
   end
 
   -- Now, merge consecutive ASCII word-like tokens backwards.

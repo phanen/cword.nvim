@@ -51,6 +51,32 @@ describe('operator-pending mode', function()
     })
   end)
 
+  it('dw on a b deletes a and space', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('b', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de on a b deletes a and space', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    eq('b', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de on a at start of multi-line does not eat next line', function()
+    -- 'a b' on line 1, 'c' on line 2. de from 'a' should delete
+    -- 'a ' (current line only), not cross-line to delete 'c'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b', 'c' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('b', lines[1])
+    eq('c', lines[2])
+  end)
+
   it('dw deletes word on CJK end-of-line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好我' })
     helpers.api.nvim_win_set_cursor(0, { 1, 6 })
