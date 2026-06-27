@@ -58,22 +58,34 @@ describe('operator-pending mode', function()
     eq('b', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
-  it('de on a b deletes a and space', function()
-    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('de')
-    eq('b', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
-  end)
-
-  it('de on a at start of multi-line does not eat next line', function()
-    -- 'a b' on line 1, 'c' on line 2. de from 'a' should delete
-    -- 'a ' (current line only), not cross-line to delete 'c'.
+  it('de on a b deletes whole line but not next', function()
+    -- nvim --clean behavior: de from 'a' in 'a b' deletes the
+    -- whole line content ('a b') but not the newline.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b', 'c' })
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('de')
     local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
     eq(2, #lines)
-    eq('b', lines[1])
+    eq('', lines[1])
+    eq('c', lines[2])
+  end)
+
+  it('de on a b single line deletes all', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    eq('', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('de on a at start of multi-line does not eat next line', function()
+    -- 'a b' on line 1, 'c' on line 2. de from 'a' should delete
+    -- 'a b' (whole line content) but not cross-line to delete 'c'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b', 'c' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('de')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('', lines[1])
     eq('c', lines[2])
   end)
 

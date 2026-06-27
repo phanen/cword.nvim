@@ -566,28 +566,6 @@ local function op_motion(method, direction)
         -- end_forward returns byte_end (1-indexed, inclusive).
         -- Convert to 0-indexed column by subtracting 1.
         local target_col = math.max(0, c - 1)
-        -- If the cursor was at the end of a single-byte word (e.g.
-        -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
-        -- word. In that case the visual range should be exclusive
-        -- of the next word (matching stock Vim's de semantics):
-        -- e.g. `de` from 'a' in 'a b' deletes 'a ' (2 bytes),
-        -- not 'a b' (3 bytes).
-        local cur_tok_at_cursor
-        for _, t in ipairs(_cut(orig_line)) do
-          if t.byte_start <= col0 + 1 and col0 + 1 <= t.byte_end and not is_whitespace(t) then
-            cur_tok_at_cursor = t
-            break
-          end
-        end
-        if
-          cur_tok_at_cursor
-          and cur_tok_at_cursor.byte_end == col0 + 1
-          and cur_tok_at_cursor.byte_start == cur_tok_at_cursor.byte_end
-        then
-          -- Cursor was at the end of a single-byte word. Make
-          -- the range exclusive of the next word.
-          target_col = math.max(0, c - 2)
-        end
         e_row, e_col = r - 1, target_col
       elseif direction == 'end_backward' then
         -- end_backward returns byte_end (1-indexed, inclusive) of
