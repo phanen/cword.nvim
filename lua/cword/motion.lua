@@ -238,6 +238,18 @@ function M.end_forward(cut, line, cursor)
         elseif has_ascii and cursor == t.byte_end - 1 then
           -- ASCII: cursor at the last byte of a word
           should_nudge = true
+        elseif
+          t.byte_start < cursor
+          and string.byte(line, t.byte_end)
+          and string.byte(line, t.byte_end) >= 0x80
+          and string.byte(line, t.byte_end) < 0xC0
+        then
+          -- Cursor is inside a token whose end is on a continuation
+          -- byte. This is likely a multi-codepoint grapheme (e.g.
+          -- ⚠️ = U+26A0 U+FE0F) where nvim will clamp the cursor
+          -- back to the start of the grapheme. Nudge to the next
+          -- word instead.
+          should_nudge = true
         end
         if should_nudge then
           local j = i + 1

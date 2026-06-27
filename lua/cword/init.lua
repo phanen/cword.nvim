@@ -204,17 +204,24 @@ local function cursor_move(method, direction)
       local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
       local sn = new_col + 1
       local b = string.byte(line, sn)
-      local next_b = string.byte(line, sn + 1)
-      -- Snap backwards to the start of the character. Only snap
-      -- when the cursor is in the middle of a multi-byte char
-      -- (current byte is a continuation byte AND the next byte
-      -- is also a continuation byte or doesn't exist). If the
-      -- next byte is a start byte or ASCII, the cursor is at
-      -- the end of a char, which is a valid boundary.
-      while b and b >= 0x80 and b < 0xC0 and next_b and next_b >= 0x80 and next_b < 0xC0 do
+      -- Snap backward to the start of the current char. Then,
+      -- if we're inside a multi-codepoint grapheme token (e.g.
+      -- ⚠️ = U+26A0 U+FE0F), snap further to the start of the
+      -- token. This handles the case where nvim clamps the
+      -- cursor back to the start of the grapheme.
+      while b and b >= 0x80 and b < 0xC0 do
         sn = sn - 1
         b = string.byte(line, sn)
-        next_b = string.byte(line, sn + 1)
+      end
+      -- Check if the snapped position is inside a grapheme token
+      -- (a token that contains U+FE0F variation selector).
+      local toks = _cut(line)
+      for _, t in ipairs(toks) do
+        if t.byte_start <= sn and sn <= t.byte_end + 1 and t.text:find('\239\184\143') then
+          -- Snap to the start of the grapheme token
+          sn = t.byte_start
+          break
+        end
       end
       new_col = sn - 1
       if new_col <= col0 then
@@ -250,6 +257,31 @@ local function cursor_move(method, direction)
       end
     end
     vim.api.nvim_win_set_cursor(win, { r, new_col })
+    -- nvim clamps the cursor for multi-codepoint graphemes (e.g.
+    -- ⚠️ = U+26A0 U+FE0F) back to the start of the grapheme.
+    -- The clamp doesn't happen immediately -- it happens during
+    -- a subsequent screen update. We can force a redraw and
+    -- check the result.
+    if is_end_fwd then
+      vim.cmd('redraw')
+      local actual = vim.api.nvim_win_get_cursor(win)[2]
+      if actual < new_col then
+        local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
+        local toks = _cut(line)
+        for _, t in ipairs(toks) do
+          if t.byte_start > actual + 1 and not is_whitespace(t) then
+            sn = t.byte_end
+            b = string.byte(line, sn)
+            while b and b >= 0x80 and b < 0xC0 do
+              sn = sn - 1
+              b = string.byte(line, sn)
+            end
+            vim.api.nvim_win_set_cursor(win, { r, sn - 1 })
+            break
+          end
+        end
+      end
+    end
   end
 end
 

@@ -217,7 +217,7 @@ describe('motion e (icu_ffi)', function()
     helpers.feed('e')
     eq(4, col0()) -- start of ⚠️ (nvim clamps end of ⚠️ back)
     helpers.feed('e')
-    eq(4, col0()) -- stays (already at start of ⚠️)
+    eq(13, col0()) -- end of 'def'
   end)
 
   it('e from space should not jump to next line', function()
@@ -429,10 +429,10 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(3, col0()) -- end of 你, snapped to start of 好
     helpers.feed('e')
     eq(1, row())
-    eq(3, col0()) -- stays (snap clamps end of 好 back)
+    eq(9, col0()) -- end of 界
     helpers.feed('e')
-    eq(1, row())
-    eq(3, col0()) -- stays
+    eq(2, row()) -- wrap to line 2
+    eq(3, col0()) -- end of 你 on line 2
   end)
 
   it('ge wraps to previous line on CJK', function()
