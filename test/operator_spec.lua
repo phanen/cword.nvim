@@ -583,6 +583,10 @@ describe('operator-pending mode', function()
     -- cw should enter insert mode
     local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
     eq('i', mode)
+    -- single <Esc> should exit insert mode (not require two)
+    helpers.feed('<Esc>')
+    mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
+    eq('n', mode)
   end)
 
   -- db at BOL

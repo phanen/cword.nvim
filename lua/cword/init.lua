@@ -614,14 +614,11 @@ local function op_motion(method, direction)
     -- nvim's `cw` on an empty line or `ce` when cursor is already
     -- at the end of a word).
     if op == 'c' and s_row == e_row and s_col == e_col then
-      local cache_ve = vim.o.virtualedit
       return string.format(
         '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d});'
-          .. 'vim.cmd("startinsert")<CR>'
-          .. '<Cmd>lua vim.o.virtualedit=%q<CR>',
+          .. 'vim.schedule(function() vim.cmd("startinsert") end)<CR>',
         s_row + 1,
-        s_col,
-        cache_ve
+        s_col
       )
     end
     -- Special case: `dw` on an empty line. nvim --clean deletes the
@@ -769,8 +766,7 @@ local function textobject(ai_type)
     if op == 'c' and s_row == e_row and s_col == e_col then
       local cache_ve = vim.o.virtualedit
       return string.format(
-        '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d});'
-          .. 'vim.cmd("startinsert")<CR>'
+        '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>i'
           .. '<Cmd>lua vim.o.virtualedit=%q<CR>',
         s_row + 1,
         s_col,
