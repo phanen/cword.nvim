@@ -333,6 +333,37 @@ end
 -- returned by `op_motion`; `op` is passed as an argument so this
 -- function works the same way on the first call and on dot-repeat
 -- (where `vim.v.operator` is no longer set).
+-- Wrap the motion target from `(r, c)` to the next non-empty
+-- line's first word end, or to the last empty line's col 0 if
+-- only empty lines follow. Returns the new `(r, c)` or nil if
+-- there is no next line at all.
+---@param cut fun(line: string): table[]
+---@param r integer 1-indexed line
+---@param c integer 1-indexed byte (byte_end of the target word)
+---@return integer?, integer?
+local function _wrap_op_forward(cut, r, c)
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local found, last_empty = false, nil
+  for nr = r + 1, #lines do
+    local s = lines[nr]
+    if not s then
+      break
+    end
+    if #s == 0 then
+      last_empty = nr
+    else
+      for _, t in ipairs(cut(s)) do
+        if not is_whitespace(t) then
+          return nr, t.byte_end
+        end
+      end
+    end
+  end
+  if last_empty then
+    return last_empty, 0
+  end
+end
+
 local function run_op(direction, op)
   local count = math.max(1, vim.v.count1)
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
@@ -453,100 +484,29 @@ local function run_op(direction, op)
       if not found then
         break
       end
-    elseif effective_direction == 'end_forward' and c >= #line then
-      -- If the cursor was at the end of a single-byte word (e.g.
-      -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
-      -- word. Don't wrap to the next line in this case; stop at
-      -- end of current line so de doesn't eat the next line.
-      local cur_tok_at_cursor
-      for _, t in ipairs(_cut(line)) do
-        if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 and not is_whitespace(t) then
-          cur_tok_at_cursor = t
-          break
-        end
-      end
-      if
-        cur_tok_at_cursor
-        and cur_tok_at_cursor.byte_start == cur_tok_at_cursor.byte_end
-        and col0 + 1 == cur_tok_at_cursor.byte_end
-      then
-        c = #line
+    elseif
+      effective_direction == 'end_forward'
+      and (
+        c > #line
+        or (
+          c == #line
+          and #line > 0
+          and string.byte(line, col0 + 1)
+          and string.byte(line, col0 + 1) >= 0xC0
+        )
+      )
+    then
+      -- Wrap to the next non-whitespace token, or the last empty
+      -- line if there is one. CJK branch handles nvim's cursor
+      -- clamping at end-of-line: cword merges CJK runs so `e`
+      -- lands at #line, but the operator clamps the cursor back to
+      -- the start byte of the last char; multi-byte start byte
+      -- signals we should still wrap to match stock nvim.
+      local new_r, new_c = _wrap_op_forward(_cut, r, c)
+      if not new_r then
         break
       end
-      -- TODO: count > 1 wraps on every iteration; the forward
-      -- (w) wrap guards with `_ < count` so the final iteration
-      -- stays at EOL.  Match that here for d2e/d3e parity.
-      -- If the motion already advanced c to the end of a word
-      -- on the same line, do not wrap. This happens when:
-      --   1. the cursor was on a whitespace token and the
-      --      motion found the next word, or
-      --   2. the cursor was inside a word (including at its
-      --      first byte) and the motion returned byte_end.
-      -- Exception: if the cursor is at the start of the last
-      -- character of the line, do wrap (matching the normal
-      -- 'e' motion at the last char).
-      if c < #line + 1 then
-        local on_ws = false
-        local inside_word = false
-        for _, t in ipairs(_cut(line)) do
-          if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 then
-            if is_whitespace(t) then
-              on_ws = true
-            elseif t.is_word_like and t.byte_end == c then
-              inside_word = true
-            end
-          end
-        end
-        if on_ws then
-          c = #line
-          break
-        end
-        if inside_word then
-          local last_char_start = #line
-          while last_char_start > 1 do
-            local b = string.byte(line, last_char_start)
-            if b and (b < 0x80 or b >= 0xC0) then
-              break
-            end
-            last_char_start = last_char_start - 1
-          end
-          if col0 + 1 ~= last_char_start then
-            c = #line
-            break
-          end
-        end
-      end
-      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local found = false
-      local last_empty = nil
-      for nr = r + 1, #lines do
-        local s = lines[nr]
-        if not s then
-          break
-        end
-        if #s == 0 then
-          -- Track empty lines for joining
-          last_empty = nr
-        else
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c, found = nr, t.byte_end, true
-              break
-            end
-          end
-          if found then
-            break
-          end
-        end
-      end
-      if not found and last_empty then
-        -- No non-whitespace token found, but there are empty
-        -- lines. Wrap to the last empty line to join them.
-        r, c, found = last_empty, 0, true
-      end
-      if not found then
-        break
-      end
+      r, c = new_r, new_c
     end
   end
   if r == row and c - 1 == col0 then

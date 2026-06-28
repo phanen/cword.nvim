@@ -388,6 +388,19 @@ describe('operator-pending mode', function()
     eq('oo bar', lines[2])
   end)
 
+  -- Regression: `ce` from end of a non-last word on a multi-word
+  -- line must not wrap to the next line. Previously cword always
+  -- wrapped when the motion target was at the end of the line,
+  -- so `ce` from `c` of "abc def" with "foo" on the next line
+  -- ate the "foo" line.
+  it('ce at end of non-last word does not wrap (ASCII)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc def', 'foo' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+    helpers.feed('ce')
+    helpers.exec_lua('vim.wait(50)')
+    eq({ 'ab', 'foo' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
+  end)
+
   it('de at EOL wraps to next line (CJK)', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好', '世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 3 }) -- on 好 (last char)
