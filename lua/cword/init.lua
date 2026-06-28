@@ -651,6 +651,26 @@ local function op_motion(method, direction)
       return '<Esc>'
     end
     local cache_ve = vim.o.virtualedit
+    -- For same-line operations, don't use virtualedit. The cursor
+    -- at (row, col) is on the byte at that col. The visual range
+    -- is from anchor to cursor, inclusive. With virtualedit=onemore,
+    -- the cursor at col would be past the byte, including one
+    -- extra char. Use e_col directly (without +1) for same-line.
+    if s_row == e_row then
+      return string.format(
+        '<Cmd>lua'
+          .. ' vim.api.nvim_win_set_cursor(0, {%d, %d});'
+          .. 'vim.cmd("normal! v");'
+          .. 'vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>'
+          .. '<Cmd>lua vim.cmd("normal! %s");vim.o.virtualedit=%q<CR>',
+        s_row + 1,
+        s_col,
+        e_row + 1,
+        e_col,
+        cmd,
+        cache_ve
+      )
+    end
     return string.format(
       '<Cmd>lua vim.o.virtualedit="onemore";'
         .. 'vim.api.nvim_win_set_cursor(0, {%d, %d});'

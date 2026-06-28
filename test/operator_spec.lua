@@ -246,6 +246,31 @@ describe('operator-pending mode', function()
     eq('世界', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
+  it('cw on abc def changes abc and trailing space', function()
+    -- nvim --clean: cw from col 0 deletes 'abc ' (word + one
+    -- space), leaving ' def'. The user reported cw was leaving
+    -- ' def' but by removing the trailing space too, i.e. by
+    -- matching dw instead of ce.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc def' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    local result = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    io.write('cw result: "' .. result .. '"\n')
+    eq(' def', result)
+  end)
+
+  it('ce on ab cd at col 0 deletes ab plus trailing space', function()
+    -- nvim --clean: ce from col 0 on 'ab cd' deletes 'ab ' (word
+    -- + one space), leaving ' cd'. Cursor is on 'a' (end of 'ab'
+    -- is at col 2, same as start of 'ab' which is at col 0).
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'ab cd' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('ce')
+    local result = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    io.write('ce result: "' .. result .. '"\n')
+    eq(' cd', result)
+  end)
+
   it('db on CJK 你好世界 from 世界 deletes 你好', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 6 })
