@@ -310,12 +310,24 @@ local function op_motion(method, direction)
   return function()
     local count = math.max(1, vim.v.count1)
     local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
+    local op = vim.v.operator
+    local reg = vim.v.register
+    -- For `c` with `w` (forward) motion, nvim treats it as `ce`:
+    -- delete the current word including its last char, but not
+    -- trailing whitespace. Use end_forward so the visual range
+    -- covers the current word only.
+    local effective_method = method
+    local effective_direction = direction
+    if op == "c" and direction == "forward" then
+      effective_method = M.motion.end_forward
+      effective_direction = "end_forward"
+    end
     local r, c = row, col0 + 1
     local orig_line = vim.api.nvim_get_current_line()
     local orig_line_len = #orig_line
     for _ = 1, count do
       local line = vim.api.nvim_get_current_line()
-      c = method(_cut, line, c)
+      c = effective_method(_cut, line, c)
       -- Forward: when there is no next word on the current line,
       -- only wrap to the next line when the count loop hasn't
       -- finished (i.e. more motions are pending). The final
@@ -409,7 +421,7 @@ local function op_motion(method, direction)
         if not found then
           break
         end
-      elseif direction == 'end_forward' and c >= #line then
+      elseif effective_direction == "end_forward" and c >= #line then
         -- If the cursor was at the end of a single-byte word (e.g.
         -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
         -- word. Don't wrap to the next line in this case; stop at
@@ -550,7 +562,7 @@ local function op_motion(method, direction)
       end
       s_row, s_col = row - 1, col0
       if r > row then
-        if direction == 'end_forward' then
+        if effective_direction == "end_forward" then
           -- Cross-line end_forward: c is byte_end (1-indexed).
           -- Use c - 1 as 0-indexed visual endpoint to land on the
           -- last byte of the target word (consistent with
@@ -574,7 +586,7 @@ local function op_motion(method, direction)
         -- through the end of the target word, plus the newline.
         -- This matches stock nvim's dge cross-line behaviour.
         e_row, e_col = r - 1, c
-      elseif direction == 'end_forward' then
+      elseif effective_direction == "end_forward" then
         -- end_forward returns byte_end (1-indexed, inclusive).
         -- Convert to 0-indexed column by subtracting 1.
         local target_col = math.max(0, c - 1)
