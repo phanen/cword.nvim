@@ -558,6 +558,33 @@ describe('operator-pending mode', function()
     eq('world', lines[2])
   end)
 
+  -- dw on empty line deletes the line (including newline)
+  it('dw on empty line deletes the line', function()
+    -- nvim --clean behavior: dw on an empty line deletes the
+    -- current line (joining it with the next line). cw on an
+    -- empty line does NOT delete the line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '', 'hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(1, #lines)
+    eq('hello', lines[1])
+  end)
+
+  -- cw on empty line does NOT delete the line
+  it('cw on empty line does not delete the line', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '', 'hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('', lines[1])
+    eq('hello', lines[2])
+    -- cw should enter insert mode
+    local mode = helpers.exec_lua('return vim.api.nvim_get_mode().mode')
+    eq('i', mode)
+  end)
+
   -- db at BOL
   it('db at BOL wraps to previous line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello', 'world' })

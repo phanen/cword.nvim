@@ -323,7 +323,14 @@ local function op_motion(method, direction)
       -- (past the last character) without crossing the newline,
       -- matching stock Vim's operator-pending w semantics.
       if direction == 'forward' and c > #line then
-        if _ < count then
+        -- For empty lines, nvim's `dw` wraps to the next line even on
+        -- the final iteration, so `dw` deletes the empty line. But
+        -- `cw` does NOT delete the line (it just changes "nothing"
+        -- to "nothing"). So only wrap for empty lines when the
+        -- operator is `d` (not `c`).
+        local is_empty = #line == 0
+        local is_delete = vim.v.operator == 'd'
+        if _ < count or (is_empty and is_delete) then
           local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
           local found = false
           for nr = r + 1, #lines do
@@ -499,7 +506,12 @@ local function op_motion(method, direction)
       end
     end
     if r == row and c - 1 == col0 then
-      return '<Esc>'
+      -- Motion didn't advance. For `d` (delete), abort. For `c`
+      -- (change), still enter insert mode (changing "nothing" to
+      -- "nothing" is valid, e.g. `cw` on an empty line).
+      if vim.v.operator ~= 'c' then
+        return '<Esc>'
+      end
     end
     local s_row, s_col
     local e_row, e_col
@@ -597,6 +609,40 @@ local function op_motion(method, direction)
       s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
     end
     local op = vim.v.operator
+    -- Special case: change operator with empty visual range. Just
+    -- enter insert mode without deleting anything (matching
+    -- nvim's `cw` on an empty line or `ce` when cursor is already
+    -- at the end of a word).
+    if op == 'c' and s_row == e_row and s_col == e_col then
+      local cache_ve = vim.o.virtualedit
+      return string.format(
+        '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d});'
+          .. 'vim.cmd("startinsert")<CR>'
+          .. '<Cmd>lua vim.o.virtualedit=%q<CR>',
+        s_row + 1,
+        s_col,
+        cache_ve
+      )
+    end
+    -- Special case: `dw` on an empty line. nvim --clean deletes the
+    -- empty line (joining with the next line). The visual mode
+    -- approach doesn't work well for empty lines because the
+    -- cursor at col 0 of the next line gets clamped. Use `:delete _`
+    -- via normal! mode to delete the line.
+    if direction == 'forward' and #orig_line == 0 and op == 'd' then
+      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      if #lines > 1 then
+        return string.format(
+          '<Cmd>lua vim.fn.setreg("-", "\\n")'
+            .. ' vim.api.nvim_buf_set_lines(0, %d, %d, false, {})'
+            .. ' vim.api.nvim_win_set_cursor(0, {%d, 0})<CR>',
+          row - 1,
+          row,
+          row
+        )
+      end
+    end
+
     local cmd
     if op == 'd' then
       cmd = 'd'
@@ -715,6 +761,21 @@ local function textobject(ai_type)
 
     if op ~= 'd' and op ~= 'c' and op ~= 'y' then
       return '<Esc>'
+    end
+    -- Special case: change operator with empty visual range. Just
+    -- enter insert mode without deleting anything (matching
+    -- nvim's `cw` on an empty line or `ce` when cursor is already
+    -- at the end of a word).
+    if op == 'c' and s_row == e_row and s_col == e_col then
+      local cache_ve = vim.o.virtualedit
+      return string.format(
+        '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d});'
+          .. 'vim.cmd("startinsert")<CR>'
+          .. '<Cmd>lua vim.o.virtualedit=%q<CR>',
+        s_row + 1,
+        s_col,
+        cache_ve
+      )
     end
     local cache_ve = vim.o.virtualedit
     return string.format(
