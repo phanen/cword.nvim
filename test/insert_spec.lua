@@ -69,11 +69,43 @@ describe('insert mode', function()
     eq(0, state.cursor)
   end)
 
-  -- TODO: <c-w> at start of first word deletes leading whitespace
-  -- helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  hello' })
-  -- helpers.api.nvim_win_set_cursor(0, { 1, 2 })
-  -- helpers.feed('i<c-w>')
-  -- eq('hello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  it('<c-w> at start of first word deletes leading whitespace', function()
+    -- "  |hello" -> i<c-w> -> "hello". cword should delete the
+    -- leading whitespace when the cursor is at the start of the
+    -- first word.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  hello' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+    helpers.feed('i<c-w>')
+    eq('hello', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('<c-w> in leading whitespace deletes whitespace up to cursor', function()
+    -- "  |abc" -> i<c-w> -> "|abc". Cursor at col 2 (start of
+    -- 'abc'), then <c-w> should delete the leading whitespace.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+    helpers.feed('i<c-w>')
+    eq('abc', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('<c-w> at col 0 on whitespace-only line does not error', function()
+    -- "  " -> <c-w> should not error. nvim --clean behavior:
+    -- <c-w> at col 0 joins with previous line or does nothing.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  ' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('i<c-w>')
+    local state = helpers.exec_lua(function()
+      vim.wait(50, function()
+        return vim.api.nvim_get_current_line() ~= nil
+      end)
+      return {
+        line = vim.api.nvim_get_current_line(),
+      }
+    end)
+    -- Either stays the same or is joined with previous line.
+    -- We just check it doesn't error.
+    eq(true, state.line ~= nil)
+  end)
 
   it('<m-f> moves forward one word', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })

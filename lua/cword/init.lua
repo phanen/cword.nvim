@@ -879,16 +879,32 @@ M.insert_delete_word = function()
   if word_start == nil then
     -- No word found before the cursor. If the cursor is at the
     -- start of a word (e.g. '  hello|' where cursor is at start
-    -- of 'hello'), delete the leading whitespace.
+    -- of 'hello'), or if the cursor is in whitespace before the
+    -- first word, delete the leading whitespace up to the cursor.
     for _, t in ipairs(_cut(line)) do
       if t.byte_start - 1 == col0 and not is_whitespace(t) then
         word_start = 0
         break
       end
     end
+    if word_start == nil and col0 > 0 then
+      -- Cursor is in leading whitespace before any word. Delete
+      -- the whitespace up to the cursor.
+      for _, t in ipairs(_cut(line)) do
+        if not is_whitespace(t) and t.byte_start - 1 > 0 then
+          word_start = 0
+          break
+        end
+      end
+    end
     if word_start == nil then
       return
     end
+  end
+
+  -- Set word_end_idx if not already set (leading whitespace case).
+  if word_end_idx == nil then
+    word_end_idx = 1
   end
 
   -- Now, merge consecutive ASCII word-like tokens backwards.
