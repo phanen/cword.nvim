@@ -92,19 +92,9 @@ describe('insert mode', function()
     -- "  " -> <c-w> should not error. nvim --clean behavior:
     -- <c-w> at col 0 joins with previous line or does nothing.
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '  ' })
-    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
-    helpers.feed('i<c-w>')
-    local state = helpers.exec_lua(function()
-      vim.wait(50, function()
-        return vim.api.nvim_get_current_line() ~= nil
-      end)
-      return {
-        line = vim.api.nvim_get_current_line(),
-      }
-    end)
-    -- Either stays the same or is joined with previous line.
-    -- We just check it doesn't error.
-    eq(true, state.line ~= nil)
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 })
+    helpers.feed('a<c-w>')
+    eq('', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
   end)
 
   it('<m-f> moves forward one word', function()

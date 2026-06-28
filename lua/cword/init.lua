@@ -897,6 +897,20 @@ M.insert_delete_word = function()
         end
       end
     end
+    if word_start == nil and col0 >= #line then
+      -- Cursor is at or past the end of a whitespace-only line.
+      -- Delete the entire line content.
+      local all_ws = true
+      for _, t in ipairs(_cut(line)) do
+        if not is_whitespace(t) then
+          all_ws = false
+          break
+        end
+      end
+      if all_ws then
+        word_start = 0
+      end
+    end
     if word_start == nil then
       return
     end
