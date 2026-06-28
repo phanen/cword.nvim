@@ -595,7 +595,7 @@ local function op_motion(method, direction)
         -- user wants `cw` to consume the leading whitespace (e.g.
         -- '   abc' -> 'abc'). Find the end of the leading whitespace
         -- and use that instead.
-        if op == 'c' and col0 < #orig_line then
+        if direction == 'forward' and op == 'c' and col0 < #orig_line then
           if string.byte(orig_line, col0 + 1) == 0x20 then
             local ws_end = col0
             while ws_end < #orig_line and string.byte(orig_line, ws_end + 1) == 0x20 do

@@ -272,6 +272,21 @@ describe('operator-pending mode', function()
     eq('abc', result)
   end)
 
+  it('ce on leading whitespace deletes through end of next word', function()
+    -- nvim --clean: ce on '   abc def' from col 0 should delete
+    -- '   abc ' (leading whitespace + first word + one space),
+    -- leaving ' def'. The user reported that the result should
+    -- be ' def'. This is different from cw which only consumes
+    -- the leading whitespace; ce extends through the end of
+    -- the next word.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '   abc def' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('ce')
+    local result = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    io.write('ce on leading ws result: "' .. result .. '"\n')
+    eq(' def', result)
+  end)
+
   it('ce on ab cd at col 0 deletes ab plus trailing space', function()
     -- nvim --clean: ce from col 0 on 'ab cd' deletes 'ab ' (word
     -- + one space), leaving ' cd'. Cursor is on 'a' (end of 'ab'
