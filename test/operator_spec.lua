@@ -259,6 +259,19 @@ describe('operator-pending mode', function()
     eq(' def', result)
   end)
 
+  it('cw on leading whitespace deletes whitespace and word', function()
+    -- nvim --clean: cw on leading whitespace '   abc' from col 0
+    -- deletes the leading whitespace + the next word, leaving
+    -- 'abc'. The user reported that the result should be 'abc'
+    -- (i.e. the leading spaces are consumed).
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '   abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    local result = helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1]
+    io.write('cw on leading ws result: "' .. result .. '"\n')
+    eq('abc', result)
+  end)
+
   it('ce on ab cd at col 0 deletes ab plus trailing space', function()
     -- nvim --clean: ce from col 0 on 'ab cd' deletes 'ab ' (word
     -- + one space), leaving ' cd'. Cursor is on 'a' (end of 'ab'

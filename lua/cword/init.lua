@@ -318,9 +318,9 @@ local function op_motion(method, direction)
     -- covers the current word only.
     local effective_method = method
     local effective_direction = direction
-    if op == "c" and direction == "forward" then
+    if op == 'c' and direction == 'forward' then
       effective_method = M.motion.end_forward
-      effective_direction = "end_forward"
+      effective_direction = 'end_forward'
     end
     local r, c = row, col0 + 1
     local orig_line = vim.api.nvim_get_current_line()
@@ -421,7 +421,7 @@ local function op_motion(method, direction)
         if not found then
           break
         end
-      elseif effective_direction == "end_forward" and c >= #line then
+      elseif effective_direction == 'end_forward' and c >= #line then
         -- If the cursor was at the end of a single-byte word (e.g.
         -- 'a' in 'a b'), end_forward jumps to the end of the NEXT
         -- word. Don't wrap to the next line in this case; stop at
@@ -562,7 +562,7 @@ local function op_motion(method, direction)
       end
       s_row, s_col = row - 1, col0
       if r > row then
-        if effective_direction == "end_forward" then
+        if effective_direction == 'end_forward' then
           -- Cross-line end_forward: c is byte_end (1-indexed).
           -- Use c - 1 as 0-indexed visual endpoint to land on the
           -- last byte of the target word (consistent with
@@ -586,10 +586,26 @@ local function op_motion(method, direction)
         -- through the end of the target word, plus the newline.
         -- This matches stock nvim's dge cross-line behaviour.
         e_row, e_col = r - 1, c
-      elseif effective_direction == "end_forward" then
+      elseif effective_direction == 'end_forward' then
         -- end_forward returns byte_end (1-indexed, inclusive).
         -- Convert to 0-indexed column by subtracting 1.
         local target_col = math.max(0, c - 1)
+        -- For `cw`/`ce` when the cursor is on leading whitespace, the
+        -- motion normally jumps to the end of the next word. But the
+        -- user wants `cw` to consume the leading whitespace (e.g.
+        -- '   abc' -> 'abc'). Find the end of the leading whitespace
+        -- and use that instead.
+        if op == 'c' and col0 < #orig_line then
+          if string.byte(orig_line, col0 + 1) == 0x20 then
+            local ws_end = col0
+            while ws_end < #orig_line and string.byte(orig_line, ws_end + 1) == 0x20 do
+              ws_end = ws_end + 1
+            end
+            if ws_end > col0 then
+              target_col = ws_end - 1
+            end
+          end
+        end
         e_row, e_col = r - 1, target_col
       elseif direction == 'end_backward' then
         -- end_backward returns byte_end (1-indexed, inclusive) of
