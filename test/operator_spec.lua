@@ -401,6 +401,28 @@ describe('operator-pending mode', function()
     eq({ 'ab', 'foo' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
   end)
 
+  -- Regression: cword merges CJK runs so `end_forward` from a mid-char
+  -- cursor lands at #line even though the cursor is not at end of last
+  -- word. nvim's operator-pending also clamps the cursor back to the
+  -- start byte of the char it was on. The wrap check must not be
+  -- fooled by this; only wrap when the cursor is at the start byte of
+  -- the last char of the line, so `de` from mid 你好 eats only 世.
+  it('de on 世 of 你好世界\\n123 deletes only 世 (CJK)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '123' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 }) -- start of 世
+    helpers.feed('de')
+    helpers.exec_lua('vim.wait(50)')
+    eq({ '你好', '123' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
+  end)
+
+  it('ce on 世 of 你好世界\\n123 deletes only 世 (CJK)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界', '123' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 6 })
+    helpers.feed('ce')
+    helpers.exec_lua('vim.wait(50)')
+    eq({ '你好', '123' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
+  end)
+
   it('de at EOL wraps to next line (CJK)', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '你好', '世界' })
     helpers.api.nvim_win_set_cursor(0, { 1, 3 }) -- on 好 (last char)

@@ -364,6 +364,24 @@ local function _wrap_op_forward(cut, r, c)
   end
 end
 
+-- True if cursor (col0, 0-indexed byte offset) is at the start
+-- byte of the last char of `line`. Used to detect when nvim has
+-- clamped the cursor from end-of-last-word back to that start byte.
+---@param line string
+---@param col0 integer
+---@return boolean
+local function _cursor_at_last_char_start(line, col0)
+  local last = #line
+  while last >= 1 do
+    local b = line:byte(last)
+    if b and (b < 0x80 or b >= 0xC0) then
+      return col0 + 1 == last
+    end
+    last = last - 1
+  end
+  return col0 == 0
+end
+
 local function run_op(direction, op)
   local count = math.max(1, vim.v.count1)
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
@@ -484,24 +502,24 @@ local function run_op(direction, op)
       if not found then
         break
       end
+    elseif effective_direction == 'end_forward' and c > #line then
+      -- Motion went past end-of-line. Wrap to next line.
+      local new_r, new_c = _wrap_op_forward(_cut, r, c)
+      if not new_r then
+        break
+      end
+      r, c = new_r, new_c
     elseif
       effective_direction == 'end_forward'
-      and (
-        c > #line
-        or (
-          c == #line
-          and #line > 0
-          and string.byte(line, col0 + 1)
-          and string.byte(line, col0 + 1) >= 0xC0
-        )
-      )
+      and c == #line
+      and #line > 0
+      and _cursor_at_last_char_start(line, col0)
     then
-      -- Wrap to the next non-whitespace token, or the last empty
-      -- line if there is one. CJK branch handles nvim's cursor
-      -- clamping at end-of-line: cword merges CJK runs so `e`
-      -- lands at #line, but the operator clamps the cursor back to
-      -- the start byte of the last char; multi-byte start byte
-      -- signals we should still wrap to match stock nvim.
+      -- Motion landed at #line (a word's byte_end on this line),
+      -- and the cursor is sitting at the start byte of the last
+      -- char of the line. nvim clamps the cursor to that start byte
+      -- whenever it was originally on the end of the last word, so
+      -- wrap here to match stock nvim's `de`/`ce` join behavior.
       local new_r, new_c = _wrap_op_forward(_cut, r, c)
       if not new_r then
         break
