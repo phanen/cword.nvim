@@ -403,6 +403,20 @@ describe('operator-pending mode', function()
     eq({ 1, 2 }, helpers.api.nvim_win_get_cursor(0))
   end)
 
+  -- Regression: the cursor after `c{motion}` lands at the position
+  -- where the deleted range started, in the new line. For
+  -- `ce` on the start of a word, the deletion is shorter than
+  -- the line, so the cursor lands mid-line at s_col, not at past-EOL.
+  it('ce on first char of word lands cursor at s_col (not past-EOL)', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc def' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('ce')
+    helpers.exec_lua('vim.wait(50)')
+    eq(' def', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    eq('i', helpers.api.nvim_get_mode().mode)
+    eq({ 1, 0 }, helpers.api.nvim_win_get_cursor(0))
+  end)
+
   -- Regression: cword merges CJK runs so `end_forward` from a mid-char
   -- cursor lands at #line even though the cursor is not at end of last
   -- word. nvim's operator-pending also clamps the cursor back to the
