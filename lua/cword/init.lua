@@ -693,6 +693,14 @@ local function run_op(direction, op)
   -- vim.schedule defers the delete to the next event-loop tick.
   vim.schedule(function()
     vim.cmd('normal! ' .. op)
+    -- For `c`, place the cursor at the end of the deleted range in
+    -- the new line. In insert mode, the cursor can sit one cell past
+    -- the last byte of the line, which is where new text gets
+    -- inserted.
+    if op == 'c' then
+      local new_len = #vim.api.nvim_get_current_line()
+      vim.api.nvim_win_set_cursor(0, { s_row + 1, new_len })
+    end
     vim.o.virtualedit = cache_ve
   end)
 end

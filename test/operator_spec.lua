@@ -399,6 +399,8 @@ describe('operator-pending mode', function()
     helpers.feed('ce')
     helpers.exec_lua('vim.wait(50)')
     eq({ 'ab', 'foo' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
+    eq('i', helpers.api.nvim_get_mode().mode)
+    eq({ 1, 2 }, helpers.api.nvim_win_get_cursor(0))
   end)
 
   -- Regression: cword merges CJK runs so `end_forward` from a mid-char
@@ -421,6 +423,8 @@ describe('operator-pending mode', function()
     helpers.feed('ce')
     helpers.exec_lua('vim.wait(50)')
     eq({ '你好', '123' }, helpers.api.nvim_buf_get_lines(0, 0, -1, false))
+    eq('i', helpers.api.nvim_get_mode().mode)
+    eq({ 1, 6 }, helpers.api.nvim_win_get_cursor(0))
   end)
 
   it('de at EOL wraps to next line (CJK)', function()
