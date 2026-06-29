@@ -677,6 +677,20 @@ describe('operator-pending mode', function()
     eq('hello', lines[1])
   end)
 
+  -- `dw` on an empty line always joins it with the next line, even
+  -- if the following lines are all empty. The result is the empty
+  -- line deleted and the next line promoted.
+  it('dw on empty line with only empty lines after joins next empty', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '', '', '' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    helpers.exec_lua('vim.wait(50)')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('', lines[1])
+    eq('', lines[2])
+  end)
+
   -- cw on empty line does NOT delete the line
   it('cw on empty line does not delete the line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '', 'hello' })

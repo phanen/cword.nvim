@@ -443,8 +443,19 @@ local function run_op(direction, op)
           end
         end
         if not found then
-          c = #line + 1
-          break
+          -- For `dw` on an empty line, advance to the next line and
+          -- clear `c` so the visual range spans the empty line(s).
+          -- The special case below performs the actual deletion.
+          if is_empty and is_delete then
+            r = r + 1
+            c = 0
+            if r > #lines then
+              break
+            end
+          else
+            c = #line + 1
+            break
+          end
         end
       else
         c = #line + 1
