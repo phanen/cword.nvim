@@ -691,6 +691,19 @@ describe('operator-pending mode', function()
     eq('', lines[2])
   end)
 
+  -- `dw` on the very last line (which is empty) is a no-op, matching
+  -- stock nvim. There is no next line to join with.
+  it('dw on the last (empty) line is a no-op', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc', '' })
+    helpers.api.nvim_win_set_cursor(0, { 2, 0 })
+    helpers.feed('dw')
+    helpers.exec_lua('vim.wait(50)')
+    local lines = helpers.api.nvim_buf_get_lines(0, 0, -1, false)
+    eq(2, #lines)
+    eq('abc', lines[1])
+    eq('', lines[2])
+  end)
+
   -- cw on empty line does NOT delete the line
   it('cw on empty line does not delete the line', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '', 'hello' })

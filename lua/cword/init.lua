@@ -450,7 +450,10 @@ local function run_op(direction, op)
             r = r + 1
             c = 0
             if r > #lines then
-              break
+              -- No next line to join with (dw on the very last line).
+              -- Stock nvim treats this as a no-op. Return without
+              -- setting up a visual range or scheduling a delete.
+              return
             end
           else
             c = #line + 1
