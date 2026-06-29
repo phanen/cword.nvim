@@ -239,6 +239,25 @@ describe('insert mode', function()
     eq('你好-', line)
   end)
 
+  it('<c-w> with ASCII prefix before CJK deletes only the CJK token', function()
+    -- Regression: from EOL of 'abc你好', <c-w> must delete only '你好'
+    -- and leave 'abc'. The previous backwards-merge loop merged the
+    -- ASCII run into the cjdict word, eating the whole line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    eq('abc', helpers.api.nvim_get_current_line())
+  end)
+
+  it('<c-w> with ASCII + space + CJK at EOL deletes only the CJK token', function()
+    -- 'abc def你好' from EOL -> 'abc def' (only the trailing CJK token,
+    -- plus the preceding word boundary, is removed).
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc def你好' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('A<C-w>')
+    eq('abc def', helpers.api.nvim_get_current_line())
+  end)
+
   it('<m-f> wraps to the next line when there is no next word', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc', 'abc' })
     helpers.api.nvim_win_set_cursor(0, { 1, 2 })

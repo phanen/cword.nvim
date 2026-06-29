@@ -1035,32 +1035,6 @@ M.insert_delete_word = function()
     word_end_idx = 1
   end
 
-  -- Now, merge consecutive ASCII word-like tokens backwards.
-  -- Stop at whitespace, at non-word-like tokens (e.g. '-' when it
-  -- is not in iskeyword), and at CJK boundaries. This matches
-  -- stock nvim's <C-w> which treats each cjdict segment and each
-  -- ASCII run as a separate word.
-  for i = word_end_idx - 1, 1, -1 do
-    local t = tokens[i]
-    if is_whitespace(t) then
-      break
-    elseif not t.is_word_like then
-      break
-    else
-      local has_cjk = false
-      for j = t.byte_start, t.byte_end do
-        if line:byte(j) >= 0x80 then
-          has_cjk = true
-          break
-        end
-      end
-      if has_cjk then
-        break
-      end
-      word_start = t.byte_start - 1
-    end
-  end
-
   -- Delete from word_start to col0 (including any whitespace between the word and cursor)
   local row1 = row - 1
   -- Yank into the small-delete register now, then schedule
