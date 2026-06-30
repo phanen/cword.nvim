@@ -83,8 +83,10 @@ matching stock Vim's behaviour.
 
 ## Similar
 
-- [jieba.nvim](https://github.com/neo451/jieba.nvim)
-- [jieba-lua](https://github.com/neo451/jieba-lua)
+- https://github.com/kkew3/jieba.vim
+- https://github.com/neo451/jieba.nvim
+- https://github.com/sirasagi62/tinysegmenter.nvim
+- https://github.com/atusy/budouxify.nvim
 
 ## License
 

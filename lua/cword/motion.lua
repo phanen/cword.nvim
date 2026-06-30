@@ -235,9 +235,6 @@ function M.end_forward(cut, line, cursor)
         if not has_ascii and t.byte_start == cursor and cursor > 1 then
           -- CJK: cursor at start of a char (not the first char)
           should_nudge = true
-        elseif has_ascii and col0 == t.byte_end - 1 then
-          -- ASCII: cursor at the last byte of a word
-          should_nudge = true
         elseif
           t.byte_start < cursor
           and string.byte(line, t.byte_end)

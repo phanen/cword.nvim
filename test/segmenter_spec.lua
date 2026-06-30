@@ -4,11 +4,9 @@
 -- Or:       make test
 
 local helpers = require('test.cword_helpers')
-local Segmenter = require('cword.segmenter')
 
 local eq = helpers.eq
 local text_of = helpers.text_of
-local slice = helpers.slice
 
 describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
   -- Skip on systems without libicuuc; the load would fail.
@@ -18,6 +16,7 @@ describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
   end
 
   it('auto-detects the loaded ICU major version', function()
+    local Segmenter = require('cword.segmenter')
     eq('number', type(Segmenter._icu_version))
     assert(
       Segmenter._icu_version >= 50 and Segmenter._icu_version <= 80,
@@ -33,8 +32,7 @@ describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
 
     local function cut_ffi(str)
       return helpers.exec_lua(function(s)
-        local Segmenter = require('cword.segmenter')
-        return Segmenter.cut(s)
+        return require('cword.segmenter').cut(s)
       end, str)
     end
 

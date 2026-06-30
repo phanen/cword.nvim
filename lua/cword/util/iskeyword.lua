@@ -10,6 +10,7 @@ local M = {}
 
 local _re = nil
 local _fallback_set = nil
+local _byte_ranges = nil
 
 local function build_fallback_set()
   local opt = type(vim) == 'table' and type(vim.o) == 'table' and vim.o.iskeyword
