@@ -14,7 +14,10 @@ local M = {}
 M.Segmenter = require('cword.segmenter')
 M.motion = require('cword.motion')
 
-local is_whitespace = require('cword.util.text').is_whitespace
+local text = require('cword.util.text')
+local is_whitespace = text.is_whitespace
+local char_start = text.char_start
+local char_end = text.char_end
 
 -- Bound at require-time; no lazy-init needed.
 local _cut = M.Segmenter.cut
@@ -129,17 +132,10 @@ local function cursor_move(method, direction)
             break
           end
           if inside_word then
-            -- Check if cursor is at the start of the last char
-            -- by finding the start of the last char and comparing.
-            local last_char_start = #line
-            while last_char_start > 1 do
-              local b = string.byte(line, last_char_start)
-              if b and (b < 0x80 or b >= 0xC0) then
-                break
-              end
-              last_char_start = last_char_start - 1
-            end
-            if col0 + 1 == last_char_start then
+            -- Cursor is at the start of the last char when its byte
+            -- column equals the lead byte of the last char of `line`.
+            -- Vim's `e` at the last char crosses to the next line.
+            if col0 + 1 == char_start(line, #line) then
               -- cursor is at the start of the last char, wrap
             else
               break
@@ -198,23 +194,14 @@ local function cursor_move(method, direction)
     -- nvim clamped us back; skip to the next token's char start.
     if is_end_fwd or is_end_bwd then
       local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
-      local sn = new_col + 1
-      local b = string.byte(line, sn)
-      -- Snap backward to the start of the current char. Then,
-      -- if we're inside a multi-codepoint grapheme token (e.g.
-      -- ⚠️ = U+26A0 U+FE0F), snap further to the start of the
-      -- token. This handles the case where nvim clamps the
-      -- cursor back to the start of the grapheme.
-      while b and b >= 0x80 and b < 0xC0 do
-        sn = sn - 1
-        b = string.byte(line, sn)
-      end
-      -- Check if the snapped position is inside a grapheme token
-      -- (a token that contains U+FE0F variation selector).
+      -- Snap to the start of the current char. Then, if we're inside a
+      -- multi-codepoint grapheme token (e.g. ⚠️ = U+26A0 U+FE0F), snap
+      -- further to the start of the token. This handles the case where
+      -- nvim clamps the cursor back to the start of the grapheme.
+      local sn = char_start(line, new_col + 1)
       local toks = _cut(line)
       for _, t in ipairs(toks) do
         if t.byte_start <= sn and sn <= t.byte_end + 1 and t.text:find('\239\184\143') then
-          -- Snap to the start of the grapheme token
           sn = t.byte_start
           break
         end
@@ -225,13 +212,7 @@ local function cursor_move(method, direction)
         if is_end_fwd then
           for _, t in ipairs(toks) do
             if t.byte_start > col0 + 1 and not is_whitespace(t) then
-              sn = t.byte_end
-              b = string.byte(line, sn)
-              while b and b >= 0x80 and b < 0xC0 do
-                sn = sn - 1
-                b = string.byte(line, sn)
-              end
-              new_col = sn - 1
+              new_col = char_start(line, t.byte_end) - 1
               break
             end
           end
@@ -239,13 +220,7 @@ local function cursor_move(method, direction)
           for i = #toks, 1, -1 do
             local t = toks[i]
             if t.byte_end < col0 + 1 and not is_whitespace(t) then
-              sn = t.byte_end
-              b = string.byte(line, sn)
-              while b and b >= 0x80 and b < 0xC0 do
-                sn = sn - 1
-                b = string.byte(line, sn)
-              end
-              new_col = sn - 1
+              new_col = char_start(line, t.byte_end) - 1
               break
             end
           end
@@ -266,13 +241,7 @@ local function cursor_move(method, direction)
         local toks = _cut(line)
         for _, t in ipairs(toks) do
           if t.byte_start > actual + 1 and not is_whitespace(t) then
-            sn = t.byte_end
-            b = string.byte(line, sn)
-            while b and b >= 0x80 and b < 0xC0 do
-              sn = sn - 1
-              b = string.byte(line, sn)
-            end
-            vim.api.nvim_win_set_cursor(win, { r, sn - 1 })
+            vim.api.nvim_win_set_cursor(win, { r, char_start(line, t.byte_end) - 1 })
             break
           end
         end
@@ -367,15 +336,10 @@ end
 ---@param col0 integer
 ---@return boolean
 local function _cursor_at_last_char_start(line, col0)
-  local last = #line
-  while last >= 1 do
-    local b = line:byte(last)
-    if b and (b < 0x80 or b >= 0xC0) then
-      return col0 + 1 == last
-    end
-    last = last - 1
+  if #line == 0 then
+    return col0 == 0
   end
-  return col0 == 0
+  return col0 + 1 == char_start(line, #line)
 end
 
 local function run_op(direction, op)
@@ -496,14 +460,7 @@ local function run_op(direction, op)
         if #s > 0 then
           -- Target the START of the last character on the line
           -- so the visual endpoint is always on a char boundary.
-          local last_col = #s - 1
-          local sn = last_col + 1
-          local b = string.byte(s, sn)
-          while b and b >= 0x80 and b < 0xC0 do
-            sn = sn - 1
-            b = string.byte(s, sn)
-          end
-          r, c, found = nr, sn - 1, true
+          r, c, found = nr, char_start(s, #s) - 1, true
         else
           r, c, found = nr, 0, true
         end
@@ -569,15 +526,11 @@ local function run_op(direction, op)
     if direction == 'end_backward' and col0 > 0 and col0 < orig_line_len then
       local b = string.byte(orig_line, col0 + 1)
       if b and b >= 0x80 and b < 0xC0 then
-        local sn = col0 + 2
-        while sn <= orig_line_len do
-          b = string.byte(orig_line, sn)
-          if not b or b < 0x80 or b >= 0xC0 then
-            break
-          end
-          sn = sn + 1
-        end
-        col0 = math.min(sn - 1, orig_line_len - 1)
+        -- In the middle of a multi-byte char, snap forward to the
+        -- next char boundary so the visual start covers the full
+        -- char width. Cap at orig_line_len - 1 to avoid including
+        -- the trailing newline.
+        col0 = math.min(char_end(orig_line, col0 + 2, orig_line_len) - 1, orig_line_len - 1)
       end
     end
     s_row, s_col = row - 1, col0
@@ -633,18 +586,11 @@ local function run_op(direction, op)
       -- Snap to character boundary to avoid splitting multi-byte chars.
       local target_col = math.max(0, c - 1)
       if target_col > 0 and target_col < orig_line_len then
-        local sn = target_col + 1
-        local b = string.byte(orig_line, sn)
+        local b = string.byte(orig_line, target_col + 1)
         if b and b >= 0x80 and b < 0xC0 then
-          -- In the middle of a multi-byte char, snap backward
-          while sn > 1 do
-            sn = sn - 1
-            b = string.byte(orig_line, sn)
-            if b and b >= 0xC0 then
-              break
-            end
-          end
-          target_col = sn - 1
+          -- In the middle of a multi-byte char, snap backward to
+          -- the char's lead byte.
+          target_col = char_start(orig_line, target_col + 1) - 1
         end
       end
       e_row, e_col = r - 1, target_col
