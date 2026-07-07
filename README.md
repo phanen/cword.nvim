@@ -74,6 +74,8 @@ matching stock Vim's behaviour.
 | `cword.cmdline_delete_word`  | Command-line `<c-w>`. Delete word backward. |
 | `cword.Segmenter`            | The icu_ffi segmenter module (`.cut(str)` → token list). |
 | `cword.motion`               | Pure motion functions (`forward(cut, line, cursor)` etc.). |
+| `cword.get_cword()`          | CJK-aware version of `expand('<cword>')`. Returns the merged run (`你好`) instead of one char. Empty string when the cursor is on whitespace or a non-word token. |
+| `cword.get_token()`          | Full token under the cursor (`{text, byte_start, byte_end, is_word_like}`); `nil` on whitespace / non-word tokens. |
 
 ### Segmentation backend
 

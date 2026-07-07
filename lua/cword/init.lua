@@ -1109,6 +1109,60 @@ M.cmdline_delete_word = function()
   vim.fn.setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
 end
 
--- Exposed for spec probing.
+-- CJK-aware cword lookup.
+--
+-- `expand('<cword>')` only sees `iskeyword` bytes, so on a CJK line it
+-- returns a single character and search tools like vim-asterisk end up
+-- highlighting one char at a time. These walk the same token stream
+-- that w/b/e/ge use, so "the current word" is whatever w would treat
+-- as a word — a merged CJK run for "你好世界", a single identifier for
+-- "hello", etc.
+
+---@return table?
+local function token_at_cursor()
+  local line = vim.api.nvim_get_current_line()
+  local col0 = vim.api.nvim_win_get_cursor(0)[2]
+  local c = col0 + 1
+  local last_word
+  for _, t in ipairs(_cut(line)) do
+    if t.byte_start <= c and t.byte_end >= c then
+      if is_whitespace(t) or not t.is_word_like then
+        return nil
+      end
+      return t
+    end
+    if t.byte_start <= c and not is_whitespace(t) and t.is_word_like then
+      last_word = t
+    end
+  end
+  -- Cursor one cell past the last byte (`virtualedit` allows this);
+  -- if the line ends on a word, return that word to match
+  -- `expand('<cword>')`.
+  if last_word and last_word.byte_end == #line then
+    return last_word
+  end
+  return nil
+end
+
+---CJK-aware word under the cursor. Mirrors |expand('<cword>')| (empty
+---string when the cursor is not on a word token); the only difference
+---is CJK content, where it returns the merged run instead of one char.
+---@return string
+function M.get_cword()
+  local tok = token_at_cursor()
+  if not tok then
+    return ''
+  end
+  return tok.text
+end
+
+---Full token under the cursor (text + byte offsets + is_word_like).
+---Returns nil on whitespace or non-word non-whitespace tokens.
+---@return { text: string, byte_start: integer, byte_end: integer, is_word_like: boolean }?
+function M.get_token()
+  return token_at_cursor()
+end
+
+M._token_at_cursor = token_at_cursor
 
 return M
