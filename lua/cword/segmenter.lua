@@ -206,6 +206,99 @@ local function to_utf16(s)
   return buf, n
 end
 
+-- ICU's UAX#29 word segmentation splits ASCII lines on chars like '-'
+-- even when the user has included them in 'iskeyword'. The
+-- per-ICU-token post-processing above can only refine within an ICU
+-- token, not merge across them, so spans covering nothing but ASCII
+-- need a second pass driven by is_word_like_at. Spans that touch any
+-- multi-byte byte (CJK, kana, hangul, Latin extended, etc.) are left
+-- alone — ICU's cjdict / Viterbi is authoritative for them (e.g.
+-- "你好世界" -> "你好|世界"), and is_word_like_at would collapse all
+-- CJK into a single run anyway.
+---@param line string
+---@param tokens table[]
+---@return table[]
+local function resegment_ascii(line, tokens)
+  local len = #line
+  if len == 0 then
+    return tokens
+  end
+
+  local spans = {}
+  do
+    local pos = 1
+    while pos <= len do
+      if string.byte(line, pos) >= 0x80 then
+        pos = pos + 1
+      else
+        local start = pos
+        while pos <= len and string.byte(line, pos) < 0x80 do
+          pos = pos + 1
+        end
+        spans[#spans + 1] = { start, pos - 1 }
+      end
+    end
+  end
+  if #spans == 0 then
+    return tokens
+  end
+
+  local out = {}
+  local n = #tokens
+  local i = 1
+  local span_idx = 1
+  while i <= n do
+    local t = tokens[i]
+    while span_idx <= #spans and spans[span_idx][2] < t.byte_start do
+      span_idx = span_idx + 1
+    end
+    local span = span_idx <= #spans and spans[span_idx] or nil
+    local in_span = span ~= nil and t.byte_start >= span[1] and t.byte_end <= span[2]
+    if in_span then
+      local pos = span[1]
+      while pos <= span[2] do
+        local wl = is_word_like_at(line, pos)
+        local run_start = pos
+        if wl then
+          while pos <= span[2] and is_word_like_at(line, pos) do
+            pos = pos + 1
+          end
+        else
+          -- Non-word run: walk until a word-like char or a ws/non-ws
+          -- boundary inside the run. This mirrors the merge pass's
+          -- "don't merge across whitespace" rule: `->` stays one
+          -- token, but the spaces between two `->` runs are not
+          -- absorbed into either side.
+          local first_is_ws = line:sub(pos, pos):match('%s') ~= nil
+          while pos <= span[2] do
+            if is_word_like_at(line, pos) then
+              break
+            end
+            local cur_is_ws = line:sub(pos, pos):match('%s') ~= nil
+            if cur_is_ws ~= first_is_ws then
+              break
+            end
+            pos = pos + 1
+          end
+        end
+        out[#out + 1] = {
+          text = line:sub(run_start, pos - 1),
+          byte_start = run_start,
+          byte_end = pos - 1,
+          is_word_like = wl,
+        }
+      end
+      while i <= n and tokens[i].byte_end <= span[2] do
+        i = i + 1
+      end
+    else
+      out[#out + 1] = t
+      i = i + 1
+    end
+  end
+  return out
+end
+
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
@@ -323,7 +416,7 @@ function M.cut(str)
       merged[#merged + 1] = t
     end
   end
-  return merged
+  return resegment_ascii(str, merged)
 end
 
 return M

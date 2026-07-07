@@ -91,6 +91,80 @@ describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
   end)
 end)
 
+describe('iskeyword-aware resegment', function()
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
+
+  -- The user's case: iskeyword includes '-' so 'abc-cde' should be one
+  -- word. ICU itself splits 'abc-cde' into 3 tokens at '-'; the
+  -- resegment pass must undo that split when '-' is in iskeyword.
+  local function cut_with(iskeyword, str)
+    return helpers.exec_lua(function(isk, s)
+      vim.o.iskeyword = isk
+      return require('cword.segmenter').cut(s)
+    end, iskeyword, str)
+  end
+
+  it('keeps abc-cde whole when "-" is in iskeyword', function()
+    local t = cut_with('!-~,^*,^|,^",192-255', 'abc-cde')
+    eq(1, #t)
+    eq('abc-cde', t[1].text)
+    eq(true, t[1].is_word_like)
+  end)
+
+  it('keeps hello-world whole when "-" is in iskeyword', function()
+    local t = cut_with('!-~,^*,^|,^",192-255', 'hello-world')
+    eq(1, #t)
+    eq('hello-world', t[1].text)
+  end)
+
+  it('still splits abc-cde on "-" with default iskeyword', function()
+    local t = cut_with('@,48-57,_,192-255', 'abc-cde')
+    eq(3, #t)
+    eq('abc', t[1].text)
+    eq('-', t[2].text)
+    eq('cde', t[3].text)
+    eq(true, t[1].is_word_like)
+    eq(false, t[2].is_word_like)
+    eq(true, t[3].is_word_like)
+  end)
+
+  it('preserves CJK segmentation regardless of iskeyword', function()
+    -- Pure-CJK line has no ASCII spans, so resegment is a no-op.
+    local t = cut_with('!-~,^*,^|,^",192-255', '你好世界')
+    eq(2, #t)
+    eq('你好', t[1].text)
+    eq('世界', t[2].text)
+  end)
+
+  it('re-walks only the ASCII span when mixed with CJK', function()
+    local t = cut_with('!-~,^*,^|,^",192-255', '你好 abc-def 世界')
+    eq(5, #t)
+    eq('你好', t[1].text)
+    eq(' ', t[2].text)
+    eq('abc-def', t[3].text)
+    eq(' ', t[4].text)
+    eq('世界', t[5].text)
+  end)
+
+  it('does not merge across whitespace in non-word runs', function()
+    -- "->" should stay one token, but the spaces between two "->" runs
+    -- must not be absorbed into either side (mirrors the merge-pass
+    -- rule used by the rest of the pipeline).
+    local t = cut_with('@,48-57,_,192-255', 'a ->  ->  b')
+    eq(7, #t)
+    eq('a', t[1].text)
+    eq(' ', t[2].text)
+    eq('->', t[3].text)
+    eq('  ', t[4].text)
+    eq('->', t[5].text)
+    eq('  ', t[6].text)
+    eq('b', t[7].text)
+  end)
+end)
+
 describe('motion module surface', function()
   it('exposes four pure functions for word motion', function()
     local motion = require('cword.motion')
