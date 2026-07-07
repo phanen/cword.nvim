@@ -929,8 +929,6 @@ end
 
 M.insert_forward = insert_move(M.motion.forward, 'forward')
 M.insert_backward = insert_move(M.motion.backward, 'backward')
-M.insert_end_forward = insert_move(M.motion.end_forward, 'end_forward')
-M.insert_end_backward = insert_move(M.motion.end_backward, 'end_backward')
 
 -- Insert-mode delete word backward (<c-w>).
 M.insert_delete_word = function()
@@ -1158,7 +1156,5 @@ end
 function M.get_token()
   return token_at_cursor()
 end
-
-M._token_at_cursor = token_at_cursor
 
 return M
