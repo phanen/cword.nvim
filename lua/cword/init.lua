@@ -14,14 +14,10 @@ local M = {}
 M.Segmenter = require('cword.segmenter')
 M.motion = require('cword.motion')
 
+local is_whitespace = require('cword.util.text').is_whitespace
+
 -- Bound at require-time; no lazy-init needed.
 local _cut = M.Segmenter.cut
-
----@param tok table
----@return boolean
-local function is_whitespace(tok)
-  return tok.text:match('^%s+$') ~= nil
-end
 
 -- No-op kept for backward compatibility with existing configs.
 function M.setup() end

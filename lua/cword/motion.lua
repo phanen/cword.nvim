@@ -8,11 +8,7 @@
 
 local M = {}
 
----@param tok table
----@return boolean
-local function is_whitespace(tok)
-  return tok.text:match('^%s+$') ~= nil
-end
+local is_whitespace = require('cword.util.text').is_whitespace
 
 -- ZWJ (Zero Width Joiner) is U+200D, encoded as E2 80 8D in UTF-8.
 -- Nvim treats ZWJ sequences as single grapheme clusters, so the cursor
@@ -26,97 +22,24 @@ local function is_zwj(tok)
   return tok.text == ZWJ
 end
 
--- Split a token into sub-tokens based on character class boundaries.
--- This mimics stock nvim's behavior where ASCII and emoji are separate words.
--- ZWJ sequences are kept together as a single token.
-local function split_token_by_class(t)
-  local result = {}
-  local current_start = t.byte_start
-  local current_text = {}
-  local current_class = nil -- 'ascii', 'emoji', 'other'
-
-  local i = t.byte_start
-  while i <= t.byte_end do
-    local byte = t.text:byte(i - t.byte_start + 1)
-    local char_class
-    local char_len = 1
-
-    if byte < 0x80 then
-      char_class = 'ascii'
-      char_len = 1
-    elseif byte < 0xE0 then
-      char_class = 'emoji'
-      char_len = 2
-    elseif byte < 0xF0 then
-      char_class = 'emoji'
-      char_len = 3
-    else
-      char_class = 'emoji'
-      char_len = 4
-    end
-
-    -- Add the character to the current text
-    local char_text = t.text:sub(i - t.byte_start + 1, i - t.byte_start + char_len)
-    table.insert(current_text, char_text)
-
-    -- Check if we need to split
-    if current_class and current_class ~= char_class then
-      -- Class changed, emit the current token (without the new character)
-      table.remove(current_text) -- Remove the new character
-      if #current_text > 0 then
-        -- All non-whitespace tokens are word-like for motion purposes.
-        -- Nvim treats emoji as word characters for w/b/e/ge motions.
-        table.insert(result, {
-          text = table.concat(current_text),
-          byte_start = current_start,
-          byte_end = i - 1,
-          is_word_like = true,
-        })
-      end
-      -- Start a new token with the new character
-      current_start = i
-      current_text = { char_text }
-    end
-
-    current_class = char_class
-    i = i + char_len
-  end
-
-  -- Emit the last token
-  if #current_text > 0 then
-    -- All non-whitespace tokens are word-like for motion purposes.
-    -- Nvim treats emoji as word characters for w/b/e/ge motions.
-    table.insert(result, {
-      text = table.concat(current_text),
-      byte_start = current_start,
-      byte_end = t.byte_end,
-      is_word_like = true,
-    })
-  end
-
-  return result
-end
-
--- Post-process tokens to split on character class boundaries.
+-- Motion semantics: every non-whitespace token is word-like. Stock
+-- nvim's w/b/e/ge treat ASCII operators (`->`, `**`, etc.) as words;
+-- the segmenter's iskeyword-based classification disagrees for these
+-- operators, so we override here. ZWJ joins emoji into a single
+-- grapheme that nvim treats as one word, so it falls in the same
+-- bucket.
 local function postprocess_tokens(tokens)
   local result = {}
   for _, t in ipairs(tokens) do
-    if not is_whitespace(t) and not is_zwj(t) then
-      -- Split non-whitespace, non-ZWJ tokens by character class
-      local split = split_token_by_class(t)
-      for _, sub in ipairs(split) do
-        table.insert(result, sub)
-      end
-    elseif is_zwj(t) then
-      -- Mark ZWJ tokens as word-like so they're treated as part of the word
-      table.insert(result, {
+    if is_whitespace(t) then
+      result[#result + 1] = t
+    else
+      result[#result + 1] = {
         text = t.text,
         byte_start = t.byte_start,
         byte_end = t.byte_end,
         is_word_like = true,
-      })
-    else
-      table.insert(result, t)
+      }
     end
   end
   return result
@@ -390,8 +313,5 @@ function M.end_backward(cut, line, cursor)
   end
   return (prev or { byte_end = 1 }).byte_end
 end
-
--- Export for testing
-M._postprocess_tokens = postprocess_tokens
 
 return M
