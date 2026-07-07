@@ -338,85 +338,16 @@ function M.cut(str)
     local byte_start = utf16_to_byte(str, u_start) + 1
     local byte_end = utf16_to_byte(str, u_end)
     if byte_end >= byte_start then
-      -- ICU may merge dots/hyphens into alphanumeric runs (e.g.
-      -- "pkgs.hello.out" becomes one token). Split those runs at
-      -- non-iskeyword boundaries so that iskeyword is respected.
-      local pos = byte_start
-      local run_start = pos
-      local run_text = {}
-      local run_wl = is_word_like_at(str, pos)
-      while pos <= byte_end do
-        local b1 = string.byte(str, pos)
-        local clen
-        if b1 < 0x80 then
-          clen = 1
-        elseif b1 < 0xE0 then
-          clen = 2
-        elseif b1 < 0xF0 then
-          clen = 3
-        else
-          clen = 4
-        end
-        local ch = string.sub(str, pos, pos + clen - 1)
-        local ch_wl = is_word_like_at(str, pos)
-        if ch_wl == run_wl then
-          run_text[#run_text + 1] = ch
-          pos = pos + clen
-        else
-          if #run_text > 0 then
-            tokens[#tokens + 1] = {
-              text = table.concat(run_text),
-              byte_start = run_start,
-              byte_end = pos - 1,
-              is_word_like = run_wl,
-            }
-          end
-          run_text = { ch }
-          run_start = pos
-          run_wl = ch_wl
-          pos = pos + clen
-        end
-      end
-      if #run_text > 0 then
-        tokens[#tokens + 1] = {
-          text = table.concat(run_text),
-          byte_start = run_start,
-          byte_end = pos - 1,
-          is_word_like = run_wl,
-        }
-      end
+      tokens[#tokens + 1] = {
+        text = str:sub(byte_start, byte_end),
+        byte_start = byte_start,
+        byte_end = byte_end,
+        is_word_like = is_word_like_at(str, byte_start),
+      }
     end
   end
 
-  -- Merge adjacent non-word, non-whitespace tokens. ICU splits
-  -- each `->` into `-` + `>` and each space-run into its own
-  -- tokens. The first is word-like for `w` purposes (we want
-  -- `w` to skip the whole `->`), the second is not. We therefore
-  -- only merge non-word tokens whose text is not pure whitespace,
-  -- and never across a whitespace run.
-  --
-  -- Result for "a ->  ->  b":
-  --   a | " " | "->" | "  " | "->" | "  " | b
-  local function is_pure_ws(t)
-    return t.text:match('^%s+$') ~= nil
-  end
-  local merged = {}
-  for _, t in ipairs(tokens) do
-    local last = merged[#merged]
-    if
-      last
-      and not last.is_word_like
-      and not t.is_word_like
-      and not is_pure_ws(last)
-      and not is_pure_ws(t)
-    then
-      last.text = last.text .. t.text
-      last.byte_end = t.byte_end
-    else
-      merged[#merged + 1] = t
-    end
-  end
-  return resegment_ascii(str, merged)
+  return resegment_ascii(str, tokens)
 end
 
 return M
