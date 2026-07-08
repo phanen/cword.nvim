@@ -22,6 +22,35 @@ local char_end = text.char_end
 -- Bound at require-time; no lazy-init needed.
 local _cut = M.Segmenter.cut
 
+-- Track the position where the current insert session started typing.
+-- Mirrors nvim's `Insstart_orig` semantics for `<c-w>`: the deletion
+-- should not cross this column, so appending `def` to `abc` only
+-- removes `def`, not the whole combined `abcdef` word.
+local _ins_start_line = -1
+local _ins_start_col = -1
+local _ins_first_char = true
+-- Only register the tracking autocmds when the nvim API is available.
+-- Phase 1 specs (busted, plain Lua) load this module without nvim, so
+-- `vim.api` is nil and the call would error. The insert-mode boundary
+-- is a Phase 2 feature anyway.
+if type(vim) == 'table' and type(vim.api) == 'table' then
+  vim.api.nvim_create_autocmd('InsertEnter', {
+    callback = function()
+      _ins_first_char = true
+    end,
+  })
+  vim.api.nvim_create_autocmd('InsertCharPre', {
+    callback = function()
+      if _ins_first_char then
+        local pos = vim.api.nvim_win_get_cursor(0)
+        _ins_start_line = pos[1]
+        _ins_start_col = pos[2]
+        _ins_first_char = false
+      end
+    end,
+  })
+end
+
 -- No-op kept for backward compatibility with existing configs.
 function M.setup() end
 
@@ -899,9 +928,23 @@ M.insert_delete_word = function()
   -- Stock nvim behavior: delete the word before cursor plus any
   -- trailing whitespace between the word and cursor.
   -- Stock nvim treats consecutive non-whitespace characters as a single word.
+  -- The insert start (where this insert session began typing) is also a
+  -- hard stop: appending `def` to `abc` only removes `def`, not the
+  -- whole combined `abcdef` word. nvim's `ins_bs` enforces this via
+  -- `Insstart_orig`; we mirror it with `_ins_start_col`.
   local tokens = _cut(line)
   local word_start = nil
   local delete_end = col0
+
+  -- Only treat the insert start as a boundary when it's on this line
+  -- AND the cursor has actually moved past it (i.e. chars were typed
+  -- in this session). Without this guard, `<c-w>` fired the instant the
+  -- user enters insert mode would incorrectly refuse to delete pre-existing
+  -- text that the cursor was sitting on.
+  local ins_col = -1
+  if _ins_start_line == row and col0 > _ins_start_col then
+    ins_col = _ins_start_col
+  end
 
   -- First, skip any trailing whitespace before the cursor
   local word_end_idx = nil
@@ -917,6 +960,9 @@ M.insert_delete_word = function()
         -- Found a non-whitespace token, this is the end of the word
         word_end_idx = i
         word_start = t.byte_start - 1
+        if ins_col > word_start then
+          word_start = ins_col
+        end
         break
       end
     elseif t.byte_start - 1 < col0 and t_end_0 >= col0 then
@@ -925,6 +971,9 @@ M.insert_delete_word = function()
         -- This is the end of the word
         word_end_idx = i
         word_start = t.byte_start - 1
+        if ins_col > word_start then
+          word_start = ins_col
+        end
         break
       end
     end

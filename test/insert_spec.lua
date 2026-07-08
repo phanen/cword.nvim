@@ -229,6 +229,45 @@ describe('insert mode', function()
     eq('abc-', line)
   end)
 
+  it('<c-w> after appending def to abc deletes only the appended def', function()
+    -- nvim's built-in <c-w> only deletes text typed in the current
+    -- insert session (Insstart_orig is a hard stop). cword mirrors
+    -- this: appending `def` to `abc` and pressing <c-w> should leave
+    -- `abc`, not an empty buffer.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 3 })
+    helpers.feed('adef<C-w>')
+    eq('abc', helpers.api.nvim_get_current_line())
+  end)
+
+  it('<c-w> after A+def on abc deletes only the appended def', function()
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('Adef<C-w>')
+    eq('abc', helpers.api.nvim_get_current_line())
+  end)
+
+  it('<c-w> with no chars typed after a still deletes the whole word', function()
+    -- Without any typed text, there's no insert start boundary, so
+    -- the original "delete the word before cursor" behavior applies.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 3 })
+    helpers.feed('a<C-w>')
+    eq('', helpers.api.nvim_get_current_line())
+  end)
+
+  it('<c-w> with cursor moved back into pre-existing text deletes from word start', function()
+    -- If the user moves the cursor backward (e.g. <Left>) past the
+    -- insert start (back into the pre-existing text), the boundary
+    -- no longer applies because the cursor is before it. <c-w>
+    -- deletes from the word's start. nvim does the same: it walks
+    -- back char-by-char and stops at mincol (BOL).
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 3 })
+    helpers.feed('adef<Left><Left><Left><C-w>')
+    eq('def', helpers.api.nvim_get_current_line())
+  end)
+
   it('<c-w> with CJK-ASCII mixed respects word boundaries', function()
     -- 你好-a: the '-' is not word-like, so <c-w> deletes only the
     -- ASCII 'a' (plus any trailing whitespace), leaving '你好-'.
