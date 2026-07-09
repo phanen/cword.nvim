@@ -1,0 +1,59 @@
+diff --git a/autoload/asterisk.vim b/autoload/asterisk.vim
+index a036a0a..9027b66 100644
+--- a/autoload/asterisk.vim
++++ b/autoload/asterisk.vim
+@@ -53,7 +53,7 @@ function! asterisk#do(mode, config) abort
+     let config = extend(s:default_config(), a:config)
+     let is_visual = s:is_visual(a:mode)
+     " Raw cword without \<\>
+-    let cword = (is_visual ? s:get_selected_text() : s:escape_pattern(expand('<cword>')))
++    let cword = (is_visual ? s:get_selected_text() : s:escape_pattern(s:get_cword()))
+     if cword is# ''
+         return s:generate_error_cmd(is_visual)
+     endif
+@@ -140,7 +140,10 @@ endfunction
+ 
+ " @return \<cword\> if needed: String
+ function! s:cword_pattern(cword, config) abort
+-    return printf((a:config.is_whole && a:cword =~# '\k' ? '\<%s\>' : '%s'), a:cword)
++    " Skip \<\> wrapping when the cword contains multibyte characters: Vim's
++    " word boundaries cannot match across continuous non-ASCII runs (e.g. a
++    " CJK run returned by cword.nvim), so wrapping would fail with E486.
++    return printf((a:config.is_whole && a:cword =~# '\k' && strlen(a:cword) == strchars(a:cword) ? '\<%s\>' : '%s'), a:cword)
+ endfunction
+ 
+ " This function is based on https://github.com/thinca/vim-visualstar
+@@ -315,6 +318,7 @@ endfunction
+ 
+ " @return int index of cursor in cword
+ function! s:get_pos_in_cword(cword, ...) abort
++    "return s:count_char(searchpos(a:cword, 'bcn')[1], s:get_multi_col('.'))
+     return (s:is_visual(get(a:, 1, mode(1))) || s:get_pos_char() !~# '\k') ? 0
+     \   : s:count_char(searchpos(a:cword, 'bcn')[1], s:get_multi_col('.'))
+ endfunction
+@@ -354,6 +358,24 @@ function! s:escape_pattern(str) abort
+     return escape(a:str, '~"\.^$[]*')
+ endfunction
+ 
++" @return cword: String
++" Prefer cword.nvim's CJK-aware `get_cword()` so that CJK runs (e.g.
++" "你好") are matched whole instead of one character at a time. Fall back
++" to the built-in `expand('<cword>')` when cword.nvim is not loaded.
++function! s:get_cword() abort
++    if !exists('*luaeval')
++        return expand('<cword>')
++    endif
++    try
++        let result = luaeval('require("cword").get_cword()')
++        if type(result) is# v:t_string
++            return result
++        endif
++    catch
++    endtry
++    return expand('<cword>')
++endfunction
++
+ " Restore 'cpoptions' {{{
+ let &cpo = s:save_cpo
+ unlet s:save_cpo
+
