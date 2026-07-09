@@ -22,13 +22,17 @@ local char_end = text.char_end
 -- Bound at require-time; no lazy-init needed.
 local _cut = M.Segmenter.cut
 
--- Track the position where the current insert session started typing.
--- Mirrors nvim's `Insstart_orig` semantics for `<c-w>`: the deletion
--- should not cross this column, so appending `def` to `abc` only
--- removes `def`, not the whole combined `abcdef` word.
+-- Track the leftmost cursor position during the current insert session.
+-- This mirrors nvim's `Insstart_orig` semantics: the boundary slides
+-- leftward as the user backspaces past the original insert point, so
+-- subsequent `<c-w>` invocations see the new boundary. See
+-- `src/nvim/edit.c:3686-3688`:
+--
+--   if (cursor.col < Insstart_orig.col) Insstart_orig.col = cursor.col;
+--
+-- The boundary prevents the deletion from crossing pre-insert text.
 local _ins_start_line = -1
 local _ins_start_col = -1
-local _ins_first_char = true
 -- Only register the tracking autocmds when the nvim API is available.
 -- Phase 1 specs (busted, plain Lua) load this module without nvim, so
 -- `vim.api` is nil and the call would error. The insert-mode boundary
@@ -36,16 +40,21 @@ local _ins_first_char = true
 if type(vim) == 'table' and type(vim.api) == 'table' then
   vim.api.nvim_create_autocmd('InsertEnter', {
     callback = function()
-      _ins_first_char = true
+      local pos = vim.api.nvim_win_get_cursor(0)
+      _ins_start_line = pos[1]
+      _ins_start_col = pos[2]
     end,
   })
-  vim.api.nvim_create_autocmd('InsertCharPre', {
+  -- After any text change (typing, <BS>, <C-w>, <C-u>, paste, etc.),
+  -- the cursor may have moved leftward. Slide the boundary to follow.
+  -- `TextChangedI` does not fire on pure cursor motion (arrow keys,
+  -- <Left>), which is what we want: <Left> alone does not move
+  -- Insstart_orig in nvim.
+  vim.api.nvim_create_autocmd('TextChangedI', {
     callback = function()
-      if _ins_first_char then
-        local pos = vim.api.nvim_win_get_cursor(0)
-        _ins_start_line = pos[1]
+      local pos = vim.api.nvim_win_get_cursor(0)
+      if pos[1] == _ins_start_line and pos[2] < _ins_start_col then
         _ins_start_col = pos[2]
-        _ins_first_char = false
       end
     end,
   })

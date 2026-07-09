@@ -268,6 +268,33 @@ describe('insert mode', function()
     eq('def', helpers.api.nvim_get_current_line())
   end)
 
+  it('<c-w> boundary slides leftward as <BS> crosses it (nvim parity)', function()
+    -- nvim's Insstart_orig tracks the leftmost cursor position seen
+    -- during the insert session: any <BS> (or <C-w>, <C-u>) that
+    -- crosses the original insert point slides the boundary to the
+    -- new cursor position. The next <c-w> then deletes only what
+    -- was typed after the new boundary.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'foo' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 3 })
+    -- Force each feed to be processed before the next so TextChangedI
+    -- fires between (otherwise nvim batches keys and only the final
+    -- state is visible to the autocmd).
+    helpers.feed('aX<BS>')
+    helpers.exec_lua(function()
+      vim.api.nvim_get_current_line()
+    end)
+    helpers.feed('<Left>')
+    helpers.exec_lua(function()
+      vim.api.nvim_get_current_line()
+    end)
+    helpers.feed('<BS>')
+    helpers.exec_lua(function()
+      vim.api.nvim_get_current_line()
+    end)
+    helpers.feed('Y<C-w>')
+    eq('fo', helpers.api.nvim_get_current_line())
+  end)
+
   it('<c-w> with CJK-ASCII mixed respects word boundaries', function()
     -- 你好-a: the '-' is not word-like, so <c-w> deletes only the
     -- ASCII 'a' (plus any trailing whitespace), leaving '你好-'.
