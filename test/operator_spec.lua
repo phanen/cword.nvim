@@ -1276,4 +1276,49 @@ describe('text_object API + mouse double-click', function()
     eq(4, result.e) -- byte 4 1-indexed = '好' (last char of selection)
     eq({ '你好' }, result.region)
   end)
+
+  it('<2-LeftMouse> bound to double_click_select selects the right word', function()
+    -- End-to-end: simulate a real double-click via `nvim_input_mouse`
+    -- (':help nvim_input_mouse()') and verify the visual selection.
+    -- Exercises the README recipe: `vim.fn.getmousepos()` returns
+    -- `column` (1-based byte), so the binding must subtract 1 to get
+    -- `double_click_select`'s 0-indexed byte column. Earlier the README
+    -- read `m.col` (nil) which silently fell through; this test pins
+    -- the right field name + conversion.
+    local screen = Screen.new(20, 4)
+    screen:attach()
+    helpers.exec_lua(function()
+      local cword = require('cword')
+      cword.setup()
+      local opts = { noremap = true, silent = true }
+      vim.keymap.set('', '<2-LeftMouse>', function()
+        local p = vim.fn.getmousepos()
+        if p.line < 1 then
+          return
+        end
+        cword.double_click_select(0, p.line, p.column - 1)
+      end, opts)
+      vim.cmd('set mouse=a')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    end)
+    -- Double-click on byte 0 (你): two press/release cycles.
+    helpers.exec_lua(function()
+      vim.api.nvim_input_mouse('left', 'press', '', 0, 0, 0)
+      vim.api.nvim_input_mouse('left', 'release', '', 0, 0, 0)
+      vim.api.nvim_input_mouse('left', 'press', '', 0, 0, 0)
+      vim.api.nvim_input_mouse('left', 'release', '', 0, 0, 0)
+    end)
+    local region = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return {
+        mode = vim.api.nvim_get_mode().mode,
+        region = ok and r or ('err:' .. tostring(r)),
+      }
+    end)
+    screen:detach()
+    eq('v', region.mode)
+    eq({ '你好' }, region.region)
+  end)
 end)

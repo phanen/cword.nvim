@@ -75,12 +75,15 @@ matching stock Vim's behaviour.
     -- CJK runs (你好 stays as 你|好). `cword.double_click_select`
     -- uses the same icu_ffi segmenter as the motions, so double-click
     -- on `你好` selects the whole run.
+    --
+    -- `getmousepos()` returns 1-based fields; `double_click_select` takes
+    -- a 0-indexed byte column, so `m.column - 1` does the conversion.
     vim.keymap.set('', '<2-LeftMouse>', function()
       local m = vim.fn.getmousepos()
       if m.line < 1 then
         return
       end
-      cword.double_click_select(0, m.line, m.col)
+      cword.double_click_select(0, m.line, m.column - 1)
     end, vim.tbl_extend('force', opts, { expr = false }))
   end,
 }
