@@ -705,6 +705,65 @@ end
 -- and then runs the pending operator. In visual mode the same
 -- Lua code is run synchronously and the operator branch is
 -- skipped (the selection just extends the existing visual range).
+
+-- Find the CJK-aware word (or word + trailing ws for `aw`) at the
+-- given 1-indexed byte column on a line. Returns nil when the cursor
+-- is on whitespace or past the last token, so callers can bail
+-- rather than mis-selecting the previous word.
+---@param line string
+---@param col_1 integer 1-indexed byte column (1-based; `#line + 1` is valid EOL)
+---@param ai_type 'i'|'a'
+---@return integer|nil start_c 1-indexed byte_start (inclusive)
+---@return integer|nil end_c 1-indexed byte_end (exclusive)
+local function find_text_object(line, col_1, ai_type)
+  if #line == 0 then
+    return nil
+  end
+  if col_1 < 1 then
+    return nil
+  end
+  if col_1 > #line + 1 then
+    return nil
+  end
+  -- Cursor at one-past-last-byte (= `#line + 1`) is "at the end" of the
+  -- last token. nvim reports the mouse column this way when the cursor
+  -- sits exactly at the end of a line in insert mode.
+  if col_1 == #line + 1 then
+    col_1 = #line
+  end
+
+  local toks = _cut(line)
+  local word_tok = nil
+  for _, t in ipairs(toks) do
+    if t.byte_start <= col_1 and t.byte_end >= col_1 then
+      if not is_whitespace(t) then
+        word_tok = t
+      end
+      break
+    end
+  end
+  if not word_tok then
+    return nil
+  end
+
+  local start_c = word_tok.byte_start
+  local end_c = word_tok.byte_end + 1
+
+  if ai_type == 'a' then
+    for i, t in ipairs(toks) do
+      if t == word_tok then
+        local nxt = toks[i + 1]
+        if nxt and is_whitespace(nxt) then
+          end_c = nxt.byte_end + 1
+        end
+        break
+      end
+    end
+  end
+
+  return start_c, end_c
+end
+
 local function textobject(ai_type)
   return function()
     local op = vim.v.operator
@@ -715,76 +774,42 @@ local function textobject(ai_type)
     if #line == 0 then
       return in_visual and '' or '<Esc>'
     end
-    local c = col0 + 1 -- 1-indexed byte cursor
-
-    -- Walk the tokens once to find the word the cursor is on
-    -- (or the whitespace if it sits between words). Going through
-    -- the segmenter directly avoids the motion module's "go to
-    -- the previous word at a boundary" behavior, which would
-    -- mis-select when the cursor lands on the first byte of a
-    -- word.
-    local toks = _cut(line)
-    local word_tok = nil
-    for _, t in ipairs(toks) do
-      if t.byte_start <= c and t.byte_end >= c then
-        if not is_whitespace(t) then
-          word_tok = t
-        end
-        break
-      end
-    end
-    if not word_tok then
-      -- Cursor is on whitespace or past the last token. Abort
-      -- rather than mis-select the previous word.
+    local start_c, end_c = find_text_object(line, col0 + 1, ai_type)
+    if not start_c then
       return in_visual and '' or '<Esc>'
     end
 
-    local start_c = word_tok.byte_start
-    local end_c = word_tok.byte_end + 1
-
-    -- For `aw`, extend the right edge over the trailing
-    -- whitespace run if one immediately follows the word.
-    if ai_type == 'a' then
-      for i, t in ipairs(toks) do
-        if t == word_tok then
-          local nxt = toks[i + 1]
-          if nxt and is_whitespace(nxt) then
-            end_c = nxt.byte_end + 1
-          end
-          break
-        end
-      end
-    end
-
-    -- Convert to 0-indexed visual coordinates. `nvim_win_set_cursor`
-    -- plus the visual mode that follows in the operator-pending
-    -- branch uses "on the char" semantics, so the end column is
-    -- `end_c - 2` (one past the last byte in 1-indexed form minus
-    -- one for 0-indexing). The visual mode branch below uses the
-    -- live visual mode's "between chars" semantics instead, so
-    -- it shifts the end column by one.
+    -- Convert to cursor coordinates. nvim's live visual mode uses
+    -- "between chars" semantics — cursor at 0-indexed col C selects
+    -- bytes [anchor, C] — so the end column for 'hello' (bytes 1-5)
+    -- is col 4 (= `end_c - 2`), not col 5; `end_c - 1` would eat the
+    -- byte right after the word. CJK last chars are multi-byte, so
+    -- `e_col_0` may sit mid-byte; nvim clamps the cursor to the start
+    -- of that char and the visual area correctly covers the full char.
     local s_row = row - 1
-    local s_col = start_c - 1
+    local s_col_0 = start_c - 1
     local e_row = row - 1
-    local e_col = end_c - 2
+    local e_col_0 = end_c - 2
 
     if in_visual then
-      -- Visual mode: drop out of visual, park the cursor at the
-      -- new anchor, then re-enter visual and walk to the end
-      -- column with a single `normal!` so the live visual mode
-      -- motion (which is "between chars", unlike the `<Cmd>lua`
-      -- branch's nvim_win_set_cursor "on the char" semantics)
-      -- covers exactly the intended byte range.
-      local cache_ve = vim.o.virtualedit
-      vim.o.virtualedit = 'onemore'
-      vim.cmd('normal! v') -- exit visual
-      vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
-      vim.cmd('normal! v') -- re-enter at the new anchor
-      vim.api.nvim_win_set_cursor(0, { e_row + 1, end_c - 1 })
-      vim.cmd('redraw')
-      vim.schedule(function()
-        vim.o.virtualedit = cache_ve
-      end)
+      -- Visual mode (`viw` / `vaw`): exit the current visual selection,
+      -- then rebuild it via `setpos('<, `>) + gv`. `'>` is the first
+      -- byte of the last CHAR of the visual area (per `:help '">`); for
+      -- CJK that means the lead byte of the last char, NOT the byte past
+      -- the word's last byte. `find_text_object` returns `end_c` as an
+      -- exclusive end (= 1 past the last byte of the word), so we must
+      -- snap it back to the lead byte of the previous char before
+      -- handing it to `setpos`. Without this snap, Vim keeps `end_c`
+      -- when it lands on a valid next-char boundary (which is the CJK
+      -- case) and `gv` extends the visual area one char too far.
+      vim.api.nvim_feedkeys(
+        vim.api.nvim_replace_termcodes('<Esc>', true, false, true),
+        'mtx',
+        false
+      )
+      vim.fn.setpos("'<", { 0, s_row + 1, start_c, 0 })
+      vim.fn.setpos("'>", { 0, e_row + 1, char_start(line, end_c - 1), 0 })
+      vim.cmd('normal! gv')
       return ''
     end
 
@@ -795,13 +820,13 @@ local function textobject(ai_type)
     -- enter insert mode without deleting anything (matching
     -- nvim's `cw` on an empty line or `ce` when cursor is already
     -- at the end of a word).
-    if op == 'c' and s_row == e_row and s_col == e_col then
+    if op == 'c' and s_row == e_row and s_col_0 == e_col_0 then
       local cache_ve = vim.o.virtualedit
       return string.format(
         '<Cmd>lua vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>i'
           .. '<Cmd>lua vim.o.virtualedit=%q<CR>',
         s_row + 1,
-        s_col,
+        s_col_0,
         cache_ve
       )
     end
@@ -813,9 +838,9 @@ local function textobject(ai_type)
         .. 'vim.api.nvim_win_set_cursor(0, {%d, %d})<CR>'
         .. '<Cmd>lua vim.cmd("normal! %s");vim.o.virtualedit=%q<CR>',
       s_row + 1,
-      s_col,
+      s_col_0,
       e_row + 1,
-      e_col,
+      e_col_0,
       op,
       cache_ve
     )
@@ -836,6 +861,92 @@ M._run_op = run_op
 -- pending) mode. In 'o' mode, `expr = true` is required.
 M.textobject_inner_word = textobject('i')
 M.textobject_a_word = textobject('a')
+
+-- CJK-aware text-object lookup: given a buffer + position, return
+-- the byte range (1-indexed, inclusive / exclusive) of the
+-- inner word (`ai = 'i'`) or word + trailing whitespace (`ai = 'a'`)
+-- at that position. Returns nil when the position lands on
+-- whitespace or past the last token (same behavior as the operator-
+-- pending text object, which aborts rather than mis-select).
+---@class cword.TextObject
+---@field buf integer buffer handle
+---@field row integer 1-indexed row
+---@field start integer 1-indexed byte (inclusive)
+---@field end_excl integer 1-indexed byte (exclusive)
+---@field text string the selected text
+---@field ai 'i'|'a'
+
+---@param buf integer buffer handle (0 for current)
+---@param row integer 1-indexed line number
+---@param col integer 0-indexed byte column
+---@param ai 'i'|'a'| `'i'` for inner word, `'a'` for a word (+ trailing ws)
+---@return cword.TextObject?
+function M.text_object(buf, row, col, ai)
+  ai = ai or 'i'
+  if buf == 0 then
+    buf = vim.api.nvim_get_current_buf()
+  end
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  if row < 1 or row > line_count then
+    return nil
+  end
+  local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ''
+  local col_1 = col + 1
+  if col_1 < 1 then
+    return nil
+  end
+  -- Past-EOL (beyond `#line + 1`) is invalid; nil so callers bail.
+  -- `find_text_object` itself handles the AT-EOL case (`#line + 1`).
+  if col_1 > #line + 1 then
+    return nil
+  end
+  local start_c, end_c = find_text_object(line, col_1, ai)
+  if not start_c then
+    return nil
+  end
+  return {
+    buf = buf,
+    row = row,
+    start = start_c,
+    end_excl = end_c,
+    text = line:sub(start_c, end_c - 1),
+    ai = ai,
+  }
+end
+
+-- Double-click word-selection helper. Bind it to `<2-LeftMouse>`
+-- to select the CJK-aware word under the click (matching Vim's
+-- built-in behavior for ASCII, but using `iskeyword` + cjdict
+-- instead of `\w`). Like `find_start_of_word` + `find_end_of_word`
+-- in `src/nvim/mouse.c`, but CJK-aware.
+---@param buf integer buffer handle (0 for current)
+---@param row integer 1-indexed line number
+---@param col integer 0-indexed byte column
+---@param ai 'i'|'a'| selection type (`'a'` includes trailing ws, like `aw`)
+---@return boolean true if a word was selected
+function M.double_click_select(buf, row, col, ai)
+  local obj = M.text_object(buf, row, col, ai)
+  if not obj then
+    return false
+  end
+  -- Drop any pending mode first so the marks apply cleanly.
+  vim.cmd('normal! \\<Esc>')
+  -- `setpos` requires a 4-element list [bufnum, lnum, col, off]. `col`
+  -- is 1-indexed byte: `start` is the inclusive start of the word;
+  -- `'>` should be the first byte of the last CHAR of the visual area
+  -- (per `:help '">`). `end_excl` is one past the last byte of the
+  -- word — for CJK that's the lead byte of the NEXT char, which Vim
+  -- keeps as-is when `setpos` writes it. Snap back to the lead byte of
+  -- the previous char so the visual area covers exactly the word.
+  local line = vim.api.nvim_buf_get_lines(obj.buf, obj.row - 1, obj.row, false)[1] or ''
+  vim.fn.setpos("'<", { obj.buf, obj.row, obj.start, 0 })
+  vim.fn.setpos("'>", { obj.buf, obj.row, char_start(line, obj.end_excl - 1), 0 })
+  vim.cmd('normal! gv')
+  return true
+end
 
 -- Insert-mode word motions (readline-style).
 

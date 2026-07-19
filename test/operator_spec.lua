@@ -970,18 +970,85 @@ describe('textobject iw/aw (icu_ffi backend)', function()
     })
   end)
 
+  it('viw on a CJK run covers the whole run, not the trailing CJK byte', function()
+    -- Regression for the partial-run selection bug: with `end_c` (= 7)
+    -- passed verbatim to setpos('`>', ...), Vim treated byte 7 — the
+    -- lead byte of 世, which is a valid char start — as the last char of
+    -- the visual area, so the region came back as { "你好世" } when the
+    -- cursor sat anywhere on the 你好 run. Read the actual visual region
+    -- via getregion() so the assertion catches this class of bug
+    -- regardless of mark conventions.
+    put('你好世界')
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- middle byte of 好
+    helpers.feed('viw')
+    eq('v', helpers.api.nvim_get_mode().mode)
+    local region = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return ok and r or ('err:' .. tostring(r))
+    end)
+    eq({ '你好' }, region)
+  end)
+
+  it('viw selects the inner word regardless of which CJK byte the cursor sits on', function()
+    -- Exhaustive: viw must select 你好 from any byte on the run (or 世界
+    -- from any byte on that run). The pre-fix bug was off-by-one
+    -- because `'<`/`'>` setpos got end_c (= byte after the word) instead
+    -- of the lead byte of the last char.
+    local results = {}
+    for byte_col = 0, 11 do
+      put('你好世界')
+      helpers.api.nvim_win_set_cursor(0, { 1, byte_col })
+      helpers.feed('viw')
+      results[byte_col] = helpers.exec_lua(function()
+        local ok, r =
+          pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+        return ok and r or ('err:' .. tostring(r))
+      end)
+      helpers.exec_lua(function()
+        vim.api.nvim_feedkeys(
+          vim.api.nvim_replace_termcodes('<Esc>', true, false, true),
+          'mtx',
+          false
+        )
+      end)
+    end
+    for i = 0, 5 do
+      eq({ '你好' }, results[i], 'cursor col ' .. i)
+    end
+    for i = 6, 11 do
+      eq({ '世界' }, results[i], 'cursor col ' .. i)
+    end
+  end)
+
+  it('vaw on a CJK run covers the run plus its trailing whitespace', function()
+    put('你好 世界')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('vaw')
+    local region = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return ok and r or ('err:' .. tostring(r))
+    end)
+    eq({ '你好 ' }, region)
+  end)
+
   it('viw with keymap set up selects hello', function()
     put('hello world foo')
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('viw')
-    -- After the function, check that the cursor is at col 5
-    -- (end of "hello") and the mode is still visual. These are
-    -- the concrete side effects of the keymap handler, regardless
-    -- of how nvim-test renders the visual highlight.
+    -- `'<` / `'>` mark the lead byte of the last CHAR of the visual
+    -- area (`:help '">`); for ASCII 'hello' that's the lead byte of 'o',
+    -- which equals the byte column where nvim reports col('.'). Read
+    -- the actual visual region to validate behavior without relying on
+    -- mark conventions.
     eq('v', helpers.api.nvim_get_mode().mode)
-    eq(5, helpers.api.nvim_win_get_cursor(0)[2])
-    eq(1, helpers.fn.col('v'))
-    eq(6, helpers.fn.col('.'))
+    local region = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return ok and r or ('err:' .. tostring(r))
+    end)
+    eq({ 'hello' }, region)
   end)
 
   it('vaw extends to the word plus its trailing space', function()
@@ -989,17 +1056,18 @@ describe('textobject iw/aw (icu_ffi backend)', function()
     helpers.api.nvim_win_set_cursor(0, { 1, 0 })
     helpers.feed('vaw')
     local state = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
       return {
         mode = vim.api.nvim_get_mode().mode,
         cursor = vim.api.nvim_win_get_cursor(0)[2],
         col1 = vim.fn.col('v'),
         col2 = vim.fn.col('.'),
+        region = ok and r or ('err:' .. tostring(r)),
       }
     end)
     eq('v', state.mode)
-    eq(6, state.cursor)
-    eq(1, state.col1)
-    eq(7, state.col2)
+    eq({ 'hello ' }, state.region)
   end)
 
   it('virtualedit is restored after viw', function()
@@ -1021,5 +1089,191 @@ describe('textobject iw/aw (icu_ffi backend)', function()
         return vim.o.virtualedit
       end)
     )
+  end)
+end)
+
+describe('text_object API + mouse double-click', function()
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
+
+  it('text_object returns the inner word byte range for ASCII', function()
+    local result = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world foo' })
+      -- Cursor on 'l' of 'hello' (col 1 0-indexed = byte 2 1-indexed)
+      return cword.text_object(0, 1, 2, 'i')
+    end)
+    eq('hello', result.text)
+    eq(1, result.start) -- 1-indexed byte_start inclusive
+    eq(6, result.end_excl) -- 1-indexed byte_end exclusive
+    eq('i', result.ai)
+  end)
+
+  it('text_object extends with trailing ws for ai = "a"', function()
+    local result = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world foo' })
+      return cword.text_object(0, 1, 2, 'a')
+    end)
+    eq('hello ', result.text) -- word + 1 space
+    eq(1, result.start)
+    eq(7, result.end_excl)
+  end)
+
+  it('text_object returns merged CJK run for cjdict', function()
+    local result = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+      -- Cursor on second char of 你好 (byte 4 = col 3 0-indexed)
+      return cword.text_object(0, 1, 3, 'i')
+    end)
+    eq('你好', result.text)
+    eq(1, result.start)
+    eq(7, result.end_excl) -- 你好 is 6 bytes
+  end)
+
+  it('text_object splits CJK at word-class boundaries', function()
+    local ni_hao = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '你 好 世界' })
+      return cword.text_object(0, 1, 5, 'i') -- cursor on '好'
+    end)
+    eq('好', ni_hao.text)
+    eq(5, ni_hao.start)
+    eq(8, ni_hao.end_excl)
+
+    local shi_jie = helpers.exec_lua(function()
+      local cword = require('cword')
+      return cword.text_object(0, 1, 10, 'i') -- cursor on '世'
+    end)
+    eq('世界', shi_jie.text)
+    eq(9, shi_jie.start)
+    eq(15, shi_jie.end_excl)
+  end)
+
+  it('text_object returns nil on whitespace and past EOL', function()
+    local r1 = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '你 好 世界' })
+      return cword.text_object(0, 1, 3, 'i') -- on the space
+    end)
+    eq(nil, r1)
+    local r2 = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'abc' })
+      return cword.text_object(0, 1, 4, 'i') -- past EOL
+    end)
+    eq(nil, r2)
+  end)
+
+  it('text_object clamps EOL cursor (#line + 1) to last token', function()
+    -- nvim's mouse column can report one past the last byte (EOL).
+    -- We clamp to #line + 1 and return the last token.
+    local r = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello' })
+      return cword.text_object(0, 1, 5, 'i')
+    end)
+    eq('hello', r.text)
+  end)
+
+  it('text_object returns nil for invalid row / buf', function()
+    local r1 = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello' })
+      return cword.text_object(0, 99, 0, 'i')
+    end)
+    eq(nil, r1)
+    local r2 = helpers.exec_lua(function()
+      return require('cword').text_object(9999, 1, 0, 'i')
+    end)
+    eq(nil, r2)
+  end)
+
+  it('double_click_select sets visual marks and enters visual mode', function()
+    -- `'>` is the lead byte of the last CHAR (`:help '">`): for 'hello'
+    -- that's the lead byte of 'o' (= byte 5), not byte 6 (one past).
+    -- The end mark must point AT the last char, not past it.
+    local ok = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+      -- Simulate double-click on 'l' of 'hello' (col 2 0-indexed)
+      return cword.double_click_select(0, 1, 2, 'i')
+    end)
+    eq(true, ok)
+    eq('v', helpers.api.nvim_get_mode().mode)
+    local marks = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return {
+        s = vim.fn.getpos("'<"),
+        e = vim.fn.getpos("'>"),
+        region = ok and r or ('err:' .. tostring(r)),
+      }
+    end)
+    eq(1, marks.s[2]) -- start row
+    eq(1, marks.s[3]) -- start col 1-indexed byte = 'h'
+    eq(1, marks.e[2])
+    eq(5, marks.e[3]) -- 'o' (lead byte of last char)
+    eq({ 'hello' }, marks.region)
+  end)
+
+  it('double_click_select on whitespace returns false without changing marks', function()
+    local ok = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+      return cword.double_click_select(0, 1, 5, 'i') -- on the space
+    end)
+    eq(false, ok)
+  end)
+
+  it('double_click_select with ai="a" includes trailing whitespace', function()
+    -- `aw` extends past the trailing whitespace: visual area covers
+    -- "hello " (6 bytes). `'>` should be the lead byte of the last
+    -- included char — the space at byte 6, not byte 7 (one past).
+    local ok = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world' })
+      return cword.double_click_select(0, 1, 2, 'a')
+    end)
+    eq(true, ok)
+    local result = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return {
+        e = vim.fn.getpos("'>")[3],
+        region = ok and r or ('err:' .. tostring(r)),
+      }
+    end)
+    eq(6, result.e) -- lead byte of the trailing space
+    eq({ 'hello ' }, result.region)
+  end)
+
+  it('double_click_select on a CJK run selects the whole run', function()
+    -- `'>` should be the lead byte of the last CHAR (per `:help '">`):
+    -- for 你好 that's byte 4 (start of 好), NOT byte 7 (start of 世,
+    -- which is what `end_excl` would point at). Read the actual visual
+    -- region so the assertion catches the bug class rather than
+    -- encoding the previous wrong mark convention.
+    local ok = helpers.exec_lua(function()
+      local cword = require('cword')
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, { '你好世界' })
+      return cword.double_click_select(0, 1, 2, 'i') -- middle of 你好
+    end)
+    eq(true, ok)
+    local result = helpers.exec_lua(function()
+      local ok, r =
+        pcall(vim.fn.getregion, vim.fn.getpos("'<"), vim.fn.getpos("'>"), { type = 'v' })
+      return {
+        s = vim.fn.getpos("'<")[3],
+        e = vim.fn.getpos("'>")[3],
+        region = ok and r or ('err:' .. tostring(r)),
+      }
+    end)
+    eq(1, result.s) -- byte 1 1-indexed = '你'
+    eq(4, result.e) -- byte 4 1-indexed = '好' (last char of selection)
+    eq({ '你好' }, result.region)
   end)
 end)

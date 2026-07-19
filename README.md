@@ -49,6 +49,39 @@ matching stock Vim's behaviour.
     vim.keymap.set('c', '<m-f>', cword.cmdline_forward, opts)
     vim.keymap.set('c', '<m-b>', cword.cmdline_backward, opts)
     vim.keymap.set('c', '<c-w>', cword.cmdline_delete_word, opts)
+
+    -- Textobjects (`iw` / `aw`). `expr = true` is required in operator-
+    -- pending mode. The same handler serves `diw`, `ciw`, `yiw` and the
+    -- visual-mode entry `viw` / `vaw` (the handler detects which mode
+    -- it was invoked from).
+    vim.keymap.set(
+      'o',
+      'iw',
+      cword.textobject_inner_word,
+      vim.tbl_extend('force', opts, { expr = true })
+    )
+    vim.keymap.set(
+      'o',
+      'aw',
+      cword.textobject_a_word,
+      vim.tbl_extend('force', opts, { expr = true })
+    )
+    vim.keymap.set('x', 'iw', cword.textobject_inner_word, opts)
+    vim.keymap.set('x', 'aw', cword.textobject_a_word, opts)
+
+    -- Mouse double-click selects the CJK-aware word under the cursor.
+    -- The default `iskeyword`-based `find_start_of_word` /
+    -- `find_end_of_word` in `src/nvim/mouse.c:970-981` does not merge
+    -- CJK runs (你好 stays as 你|好). `cword.double_click_select`
+    -- uses the same icu_ffi segmenter as the motions, so double-click
+    -- on `你好` selects the whole run.
+    vim.keymap.set('', '<2-LeftMouse>', function()
+      local m = vim.fn.getmousepos()
+      if m.line < 1 then
+        return
+      end
+      cword.double_click_select(0, m.line, m.col)
+    end, vim.tbl_extend('force', opts, { expr = false }))
   end,
 }
 ```
@@ -72,6 +105,10 @@ matching stock Vim's behaviour.
 | `cword.cmdline_forward`      | Command-line `<m-f>`. Move cursor forward one word. |
 | `cword.cmdline_backward`     | Command-line `<m-b>`. Move cursor backward one word. |
 | `cword.cmdline_delete_word`  | Command-line `<c-w>`. Delete word backward. |
+| `cword.textobject_inner_word` | Textobject `iw` (use in `'o'` mode with `expr = true` and in `'x'` mode). Selects the inner word at the cursor. |
+| `cword.textobject_a_word`    | Textobject `aw`. Selects the word plus its trailing whitespace. |
+| `cword.text_object(buf, row, col, ai?)` | CJK-aware text-object lookup. Returns `{buf, row, start, end_excl, text, ai}` for the word at `(row, col)` (col is 0-indexed byte). `ai` defaults to `'i'`. Returns `nil` when the cursor is on whitespace or past the last token. |
+| `cword.double_click_select(buf, row, col, ai?)` | Mouse double-click helper. Sets the `'<` / `'>` marks and enters visual mode at the CJK-aware word under `(row, col)`. Returns `true` if a word was selected. Bind it to `<2-LeftMouse>` to get CJK-aware double-click selection (matches what stock `viw` would select). |
 | `cword.Segmenter`            | The icu_ffi segmenter module (`.cut(str)` → token list). |
 | `cword.motion`               | Pure motion functions (`forward(cut, line, cursor)` etc.). |
 | `cword.get_cword()`          | CJK-aware version of `expand('<cword>')`. Returns the merged run (`你好`) instead of one char. Empty string when the cursor is on whitespace or a non-word token. |
