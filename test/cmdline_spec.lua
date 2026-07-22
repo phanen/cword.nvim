@@ -108,4 +108,14 @@ describe('command-line mode', function()
     helpers.feed('<c-w>')
     expect_cmdline('hello ', 6)
   end)
+
+  it('c-w yanks the deleted word into the small-delete register', function()
+    -- Mirrors insert_delete_word: <c-w> in cmdline mode also stores
+    -- the deleted substring (word + trailing whitespace) in `-`.
+    helpers.feed(':hello world')
+    helpers.feed('<Left><Left><Left><Left><Left>') -- cursor before "world"
+    helpers.feed('<c-w>')
+    local reg = helpers.exec_lua('return vim.fn.getreg("-")')
+    eq('hello ', reg)
+  end)
 end)

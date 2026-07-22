@@ -1213,6 +1213,11 @@ M.cmdline_delete_word = function()
     return
   end
 
+  -- Yank the deleted substring into the small-delete register,
+  -- mirroring insert_delete_word. target is 0-indexed, pos is
+  -- 1-indexed, so the deleted region is [target+1, pos-1].
+  vim.fn.setreg('-', line:sub(target + 1, pos - 1))
+
   -- target is 0-indexed, pos is 1-indexed.
   -- Delete from target+1 to pos-1 (inclusive) in 1-indexed terms.
   vim.fn.setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
