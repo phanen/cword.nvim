@@ -442,4 +442,25 @@ describe('CJK motion e2e (icu_ffi)', function()
     eq(1, helpers.exec_lua('return vim.api.nvim_win_get_cursor(0)[1]'))
     eq(9, col0()) -- end of 世界 on line 1
   end)
+
+  it('e from c in a b#c() lands on ) without wrapping (operators count as words)', function()
+    -- Regression: cword treats non-whitespace tokens like `()` and `#`
+    -- as word-like via postprocess_tokens. e from the end of `c` should
+    -- land on `)`, not wrap to the next line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b#c()', 'a b#c()' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 4 }) -- on 'c' (0-indexed)
+    helpers.feed('e')
+    eq(1, row())
+    eq(6, col0()) -- on ')' (0-indexed col 6)
+  end)
+
+  it('e from ( in a b#c() lands on ) without wrapping', function()
+    -- Same regression: cursor inside the `()` operator-run still lands
+    -- on its end (`)`) instead of wrapping to the next line.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'a b#c()', 'a b#c()' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 5 }) -- on '(' (0-indexed)
+    helpers.feed('e')
+    eq(1, row())
+    eq(6, col0()) -- on ')' (0-indexed col 6)
+  end)
 end)

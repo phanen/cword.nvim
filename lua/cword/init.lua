@@ -155,11 +155,11 @@ local function cursor_move(method, direction)
             if t.byte_start - 1 <= col0 and col0 <= t.byte_end - 1 then
               if is_whitespace(t) then
                 on_ws = true
-              elseif t.is_word_like and t.byte_end == c then
+              elseif not is_whitespace(t) and t.byte_end == c then
                 inside_word = true
               end
             end
-            if t.is_word_like and t.byte_end == c and t.byte_start - 1 > col0 then
+            if not is_whitespace(t) and t.byte_end == c and t.byte_start - 1 > col0 then
               motion_found_next = true
             end
           end
