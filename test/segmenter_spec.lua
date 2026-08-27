@@ -9,27 +9,23 @@ local eq = helpers.eq
 local text_of = helpers.text_of
 
 describe('icu_ffi segmentation (real ICU via libicuuc FFI)', function()
-  -- Skip on systems without libicuuc; the load would fail.
-  local ok, _ = pcall(require, 'cword.segmenter')
-  if not ok then
-    return
-  end
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
 
   it('auto-detects the loaded ICU major version', function()
-    local Segmenter = require('cword.segmenter')
-    eq('number', type(Segmenter._icu_version))
+    local version = helpers.exec_lua(function()
+      return require('cword.segmenter')._icu_version
+    end)
+    eq('number', type(version))
     assert(
-      Segmenter._icu_version >= 50 and Segmenter._icu_version <= 80,
-      'detected icu version looks implausible: ' .. tostring(Segmenter._icu_version)
+      version >= 50 and version <= 80,
+      'detected icu version looks implausible: ' .. tostring(version)
     )
   end)
 
   describe('segmentation (executed in target nvim via exec_lua)', function()
-    before_each(function()
-      helpers.clear()
-      helpers.setup_path()
-    end)
-
     local function cut_ffi(str)
       return helpers.exec_lua(function(s)
         return require('cword.segmenter').cut(s)
@@ -166,11 +162,24 @@ describe('iskeyword-aware resegment', function()
 end)
 
 describe('motion module surface', function()
+  before_each(function()
+    helpers.clear()
+    helpers.setup_path()
+  end)
+
   it('exposes four pure functions for word motion', function()
-    local motion = require('cword.motion')
-    eq('function', type(motion.forward))
-    eq('function', type(motion.backward))
-    eq('function', type(motion.end_forward))
-    eq('function', type(motion.end_backward))
+    local result = helpers.exec_lua(function()
+      local m = require('cword.motion')
+      return {
+        forward = type(m.forward),
+        backward = type(m.backward),
+        end_forward = type(m.end_forward),
+        end_backward = type(m.end_backward),
+      }
+    end)
+    eq('function', result.forward)
+    eq('function', result.backward)
+    eq('function', result.end_forward)
+    eq('function', result.end_backward)
   end)
 end)

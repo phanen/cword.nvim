@@ -210,6 +210,11 @@ describe('motion e (icu_ffi)', function()
   end)
 
   it('e on emoji with variation selector does not get stuck', function()
+    -- ⚠️ = U+26A0 + U+FE0F (variation selector). The token spans
+    -- multiple codepoints that nvim treats as one grapheme cluster,
+    -- so cursor can only sit at the cluster edges. e lands at the
+    -- left edge (start of ⚠️), then the next e advances via the
+    -- snap-forward block to the next word.
     put('abc ⚠️ def')
     helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- start of 'a'
     helpers.feed('e')
@@ -218,6 +223,38 @@ describe('motion e (icu_ffi)', function()
     eq(4, col0()) -- start of ⚠️ (nvim clamps end of ⚠️ back)
     helpers.feed('e')
     eq(13, col0()) -- end of 'def'
+  end)
+
+  it('e on regional-indicator pair (flag) advances past the flag', function()
+    -- 🇺🇸 = U+1F1FA + U+1F1F8, two regional indicators that form a
+    -- single flag grapheme. e from the previous word should skip
+    -- the flag and land on the end of the next word.
+    put('abc 🇺🇸 xyz')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 }) -- start of 'a'
+    helpers.feed('e')
+    eq(2, col0()) -- end of 'abc'
+    helpers.feed('e')
+    eq(15, col0()) -- skip 🇺🇸, end of 'xyz'
+  end)
+
+  it('e on skin-tone emoji advances past the emoji', function()
+    -- 👋🏽 = U+1F44B + U+1F3FD (waving hand + medium skin tone).
+    -- Same multi-codepoint-grapheme behaviour as the flag.
+    put('hi 👋🏽 ok')
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('e')
+    eq(1, col0()) -- end of 'hi'
+    helpers.feed('e')
+    eq(13, col0()) -- skip 👋🏽, end of 'ok'
+  end)
+
+  it('e on multi-codepoint grapheme at EOL lands on its start', function()
+    -- No next word to skip to, so fall back to byte_start (cursor
+    -- on the grapheme start).
+    put('abc ⚠️')
+    helpers.api.nvim_win_set_cursor(0, { 1, 2 }) -- end of 'abc'
+    helpers.feed('e')
+    eq(4, col0()) -- start of ⚠️
   end)
 
   it('e from space should not jump to next line', function()

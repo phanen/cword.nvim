@@ -1,14 +1,3 @@
--- Public entry point.
---
---   require('cword').setup()       -- init (auto-called on first move_* if omitted)
---   vim.keymap.set('n', 'w',  require('cword').move_forward)
---   vim.keymap.set('n', 'b',  require('cword').move_backward)
---   vim.keymap.set('n', 'e',  require('cword').move_end_forward)
---   vim.keymap.set('n', 'ge', require('cword').move_end_backward)
---
--- Visual mode: bind the same move_* in 'x' mode. Visual selection
--- auto-extends from the '< mark to the new cursor.
-
 local M = {}
 
 M.Segmenter = require('cword.segmenter')
@@ -18,50 +7,163 @@ local text = require('cword.util.text')
 local is_whitespace = text.is_whitespace
 local char_start = text.char_start
 local char_end = text.char_end
+local is_multi_codepoint_grapheme = text.is_multi_codepoint_grapheme
+local has_vs16 = text.has_vs16
+local whitespace_between = text.whitespace_between
+local next_non_whitespace_end = text.next_non_whitespace_end
 
--- Bound at require-time; no lazy-init needed.
 local _cut = M.Segmenter.cut
 
--- Track the leftmost cursor position during the current insert session.
--- This mirrors nvim's `Insstart_orig` semantics: the boundary slides
--- leftward as the user backspaces past the original insert point, so
--- subsequent `<c-w>` invocations see the new boundary. See
--- `src/nvim/edit.c:3686-3688`:
---
---   if (cursor.col < Insstart_orig.col) Insstart_orig.col = cursor.col;
---
--- The boundary prevents the deletion from crossing pre-insert text.
-local _ins_start_line = -1
-local _ins_start_col = -1
--- Only register the tracking autocmds when the nvim API is available.
--- Phase 1 specs (busted, plain Lua) load this module without nvim, so
--- `vim.api` is nil and the call would error. The insert-mode boundary
--- is a Phase 2 feature anyway.
-if type(vim) == 'table' and type(vim.api) == 'table' then
-  vim.api.nvim_create_autocmd('InsertEnter', {
-    callback = function()
-      local pos = vim.api.nvim_win_get_cursor(0)
-      _ins_start_line = pos[1]
-      _ins_start_col = pos[2]
-    end,
-  })
-  -- After any text change (typing, <BS>, <C-w>, <C-u>, paste, etc.),
-  -- the cursor may have moved leftward. Slide the boundary to follow.
-  -- `TextChangedI` does not fire on pure cursor motion (arrow keys,
-  -- <Left>), which is what we want: <Left> alone does not move
-  -- Insstart_orig in nvim.
-  vim.api.nvim_create_autocmd('TextChangedI', {
-    callback = function()
-      local pos = vim.api.nvim_win_get_cursor(0)
-      if pos[1] == _ins_start_line and pos[2] < _ins_start_col then
-        _ins_start_col = pos[2]
+---@param toks table[]
+---@param line string
+---@param col_0 integer 0-indexed cursor byte
+---@param dir 'fwd'|'bwd'
+---@return integer?
+local function _next_word_col(toks, line, col_0, dir)
+  if dir == 'fwd' then
+    for _, t in ipairs(toks) do
+      if t.byte_start > col_0 + 1 and not is_whitespace(t) then
+        return char_start(line, t.byte_end) - 1
       end
-    end,
-  })
+    end
+  else
+    for i = #toks, 1, -1 do
+      local t = toks[i]
+      if t.byte_end < col_0 + 1 and not is_whitespace(t) then
+        return char_start(line, t.byte_end) - 1
+      end
+    end
+  end
 end
 
--- No-op kept for backward compatibility with existing configs.
+-- Mirrors nvim's `Insstart_orig`: tracks the leftmost cursor column
+-- of the current insert session so `<c-w>` doesn't cross pre-insert
+-- text. Per-buffer so multiple buffers don't share state.
+vim.api.nvim_create_autocmd('InsertEnter', {
+  callback = function()
+    vim.b.cword_ins_start = vim.api.nvim_win_get_cursor(0)[2]
+  end,
+})
+-- TextChangedI doesn't fire on pure cursor motion (arrows, <Left>),
+-- matching stock nvim's Insstart_orig behavior.
+vim.api.nvim_create_autocmd('TextChangedI', {
+  callback = function()
+    local pos = vim.api.nvim_win_get_cursor(0)
+    if vim.b.cword_ins_start and pos[2] < vim.b.cword_ins_start then
+      vim.b.cword_ins_start = pos[2]
+    end
+  end,
+})
+
 function M.setup() end
+
+-- nvim clamps any cursor inside a multi-codepoint grapheme cluster
+-- to the cluster edges. The edge we choose:
+--   * U+FE0F in token (⚠️, ZWJ ending in a VS-joined char): byte_start,
+--     matching stock vim. A subsequent 'e' advances via the
+--     snap-forward fallback below.
+--   * No U+FE0F (flags, skin-tone): skip past the cluster to the next
+--     word's end when whitespace separates cursor and cluster, so
+--     the cursor doesn't look stuck on byte_start.
+---@param line string
+---@param col0 integer 0-indexed entry column
+---@param new_col integer 0-indexed post-motion column
+---@param is_end_fwd boolean
+---@return integer 0-indexed column
+local function snap_end_motion_col(line, col0, new_col, is_end_fwd)
+  local sn = char_start(line, new_col + 1)
+  local toks = _cut(line)
+  local grapheme_tok
+  for _, t in ipairs(toks) do
+    if t.byte_start <= sn and sn <= t.byte_end + 1 and is_multi_codepoint_grapheme(t.text) then
+      grapheme_tok = t
+      break
+    end
+  end
+  if grapheme_tok then
+    local target = grapheme_tok.byte_start
+    if
+      is_end_fwd
+      and not has_vs16(grapheme_tok.text)
+      and col0 + 1 < grapheme_tok.byte_start
+      and whitespace_between(toks, col0 + 1, grapheme_tok.byte_start)
+    then
+      local nxt = next_non_whitespace_end(toks, grapheme_tok.byte_end)
+      if nxt then
+        target = nxt
+      end
+    end
+    sn = target
+  end
+  new_col = sn - 1
+  if new_col <= col0 then
+    new_col = _next_word_col(toks, line, col0, is_end_fwd and 'fwd' or 'bwd') or new_col
+  end
+  return new_col
+end
+
+-- Wrap-scan helpers shared by cursor_move, run_op, insert_move.
+-- Each returns (line_nr, byte_start, byte_end) of the first/last
+-- non-whitespace token across adjacent lines, or (line_nr, 1, 0)
+-- for the last empty line seen. nil means no line at all in the
+-- requested direction.
+
+---@param lines string[]
+---@param start_r integer
+---@return integer?, integer?, integer?
+local function _find_wrap_forward(lines, start_r)
+  local last_empty
+  for nr = start_r, #lines do
+    local s = lines[nr]
+    if not s then
+      break
+    end
+    if #s == 0 then
+      last_empty = nr
+    else
+      for _, t in ipairs(_cut(s)) do
+        if not is_whitespace(t) then
+          return nr, t.byte_start, t.byte_end
+        end
+      end
+    end
+  end
+  if last_empty then
+    return last_empty, 1, 0
+  end
+end
+
+---@param lines string[]
+---@param start_r integer
+---@return integer?, integer?, integer?
+local function _find_wrap_backward(lines, start_r)
+  local last_empty
+  local found_nr, found_bs, found_be
+  for nr = start_r, 1, -1 do
+    local s = lines[nr]
+    if not s then
+      break
+    end
+    if #s == 0 then
+      last_empty = nr
+    else
+      for _, t in ipairs(_cut(s)) do
+        if not is_whitespace(t) then
+          last_empty = nil
+          found_nr = nr
+          found_bs = t.byte_start
+          found_be = t.byte_end
+        end
+      end
+    end
+  end
+  if last_empty then
+    return last_empty, 1, 0
+  end
+  if found_nr then
+    return found_nr, found_bs, found_be
+  end
+end
 
 -- Wrap-aware cursor mover used by all four directions. `direction` is
 -- 'forward' | 'backward' | 'end_forward' | 'end_backward'.
@@ -84,53 +186,20 @@ local function cursor_move(method, direction)
 
       if is_fwd and c > #line then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        for nr = r + 1, #lines do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_start
-              found = true
-              break
-            end
-          end
-          if found then
-            break
-          end
-          if #s == 0 then
-            r, c = nr, 1
-            found = true
-            break
-          end
-        end
-        if not found then
+        local nr, bs = _find_wrap_forward(lines, r + 1)
+        if nr then
+          r, c = nr, bs
+          found = true
+        else
           break
         end
       elseif is_bwd and c <= 1 and col0 == 0 then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        for nr = r - 1, 1, -1 do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_end
-              found = true
-            end
-          end
-          if found then
-            break
-          end
-          if #s == 0 then
-            r, c = nr, 1
-            found = true
-            break
-          end
-        end
-        if not found then
+        local nr, _, be = _find_wrap_backward(lines, r - 1)
+        if nr then
+          r, c = nr, be
+          found = true
+        else
           break
         end
       elseif is_end_fwd and c >= #line then
@@ -138,15 +207,8 @@ local function cursor_move(method, direction)
           c = #line
           break
         end
-        -- If the motion already advanced c to the end of a word
-        -- on the same line, do not wrap. This happens when:
-        --   1. the cursor was on a whitespace token and the
-        --      motion found the next word, or
-        --   2. the cursor was inside a word (including at its
-        --      first byte) and the motion returned byte_end.
-        -- Exception: if the cursor is at the start of the last
-        -- character of the line, do wrap (vim's 'e' at the last
-        -- char crosses to the next line).
+        -- 'e' from the start of the last char wraps, but from any
+        -- other position it stops on the current line.
         if c < #line + 1 then
           local on_ws = false
           local inside_word = false
@@ -170,107 +232,40 @@ local function cursor_move(method, direction)
             break
           end
           if inside_word then
-            -- Cursor is at the start of the last char when its byte
-            -- column equals the lead byte of the last char of `line`.
-            -- Vim's `e` at the last char crosses to the next line.
             if col0 + 1 == char_start(line, #line) then
-              -- cursor is at the start of the last char, wrap
+              -- cursor on last char's start byte → wrap
             else
               break
             end
           end
         end
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local found = false
-        for nr = r + 1, #lines do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_end
-              found = true
-              break
-            end
-          end
-          if found then
-            break
-          end
-        end
-        if not found then
+        local nr, _, be = _find_wrap_forward(lines, r + 1)
+        if nr then
+          r, c = nr, be
+        else
           break
         end
       elseif is_end_bwd and c <= 1 and col0 == 0 then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local found = false
-        for nr = r - 1, 1, -1 do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_end
-              found = true
-            end
-          end
-          if found then
-            break
-          end
-        end
-        if not found then
+        local nr, _, be = _find_wrap_backward(lines, r - 1)
+        if nr then
+          r, c = nr, be
+        else
           break
         end
       end
     end
 
     local new_col = math.max(0, c - 1)
-    -- Snap the column to a valid code-point start so that nvim
-    -- does not clamp it back to a different position on the next
-    -- read.  If the snap lands at or before the entry cursor,
-    -- nvim clamped us back; skip to the next token's char start.
     if is_end_fwd or is_end_bwd then
       local line = vim.api.nvim_buf_get_lines(0, r - 1, r, false)[1] or ''
-      -- Snap to the start of the current char. Then, if we're inside a
-      -- multi-codepoint grapheme token (e.g. ⚠️ = U+26A0 U+FE0F), snap
-      -- further to the start of the token. This handles the case where
-      -- nvim clamps the cursor back to the start of the grapheme.
-      local sn = char_start(line, new_col + 1)
-      local toks = _cut(line)
-      for _, t in ipairs(toks) do
-        if t.byte_start <= sn and sn <= t.byte_end + 1 and t.text:find('\239\184\143') then
-          sn = t.byte_start
-          break
-        end
-      end
-      new_col = sn - 1
-      if new_col <= col0 then
-        local toks = _cut(line)
-        if is_end_fwd then
-          for _, t in ipairs(toks) do
-            if t.byte_start > col0 + 1 and not is_whitespace(t) then
-              new_col = char_start(line, t.byte_end) - 1
-              break
-            end
-          end
-        else
-          for i = #toks, 1, -1 do
-            local t = toks[i]
-            if t.byte_end < col0 + 1 and not is_whitespace(t) then
-              new_col = char_start(line, t.byte_end) - 1
-              break
-            end
-          end
-        end
-      end
+      new_col = snap_end_motion_col(line, col0, new_col, is_end_fwd)
     end
     vim.api.nvim_win_set_cursor(win, { r, new_col })
-    -- nvim clamps the cursor for multi-codepoint graphemes (e.g.
-    -- ⚠️ = U+26A0 U+FE0F) back to the start of the grapheme.
-    -- The clamp doesn't happen immediately -- it happens during
-    -- a subsequent screen update. We can force a redraw and
-    -- check the result.
+    -- nvim's grapheme clamp runs on the next redraw, not
+    -- synchronously with nvim_win_set_cursor. Re-read and advance
+    -- if it stuck.
     if is_end_fwd then
       vim.cmd('redraw')
       local actual = vim.api.nvim_win_get_cursor(win)[2]
@@ -295,32 +290,28 @@ M.move_end_backward = cursor_move(M.motion.end_backward, 'end_backward')
 
 -- Operator-pending motion handlers.
 --
--- The handler is split in two pieces:
---   * a thin `op_motion` wrapper that runs while nvim is still in
---     operator-pending mode (so it can read `vim.v.operator`),
---   * `_run_op` that does the actual work.
+-- Split into two pieces so dot-repeat works correctly:
+--   * op_motion runs while nvim is still in operator-pending mode
+--     (where vim.v.operator is readable) and returns a
+--     `<Cmd>lua require("cword")._run_op(dir, op)<CR>` string.
+--     nvim aborts the pending operator and runs the Lua code.
+--   * run_op does the actual work and is also re-invoked by the
+--     same literal string on `.` (where vim.v.operator is no
+--     longer set, so op is passed as an argument).
 --
--- The wrapper returns a `<Cmd>lua require('cword')._run_op(dir, op)<CR>`
--- string; nvim aborts the pending operator and runs the Lua code.
--- For dot-repeat the literal string is replayed, so `_run_op` runs
--- again with the new cursor and recomputes everything dynamically.
--- This is what fixes the stale-position bug: the old implementation
--- baked the visual start/end columns into the returned string and so
--- re-ran the delete on the wrong range on `.`.
+-- The Lua snippet builds a visual selection under
+-- virtualedit=onemore (so the cursor can sit one cell past the
+-- last byte of a line — required for CJK end-of-line motion) and
+-- then applies the operator. Pattern from mini.ai's select_textobject.
 --
--- The Lua snippet builds a visual selection (`virtualedit=onemore` so
--- the cursor may sit one cell past the last byte of a line — this is
--- what makes CJK end-of-line motion work) and then applies the
--- operator. Pattern from 'mini.ai' (select_textobject).
---
--- Cross-line wrap is the tricky case. With virtualedit=onemore and
--- `nvim_win_set_cursor`, the cursor at (line, 0) is "on the first
--- char" of that line, so a visual range from (line1, 0) to (line2, 0)
--- eats the first character of line2 ("hello\nworld" becomes "orld"
--- after `dw`). The fix is to anchor the visual end on the *previous*
--- line at its byte length: that position is past the last char of
--- line1 (allowed by onemore) and the visual range then includes the
--- trailing newline without grabbing line2.
+-- Cross-line wrap is the tricky case: with virtualedit=onemore the
+-- cursor at (line, 0) is "on the first char" of that line, so a
+-- visual range from (line1, 0) to (line2, 0) eats the first char
+-- of line2 ("hello\nworld" becomes "orld" after `dw`). The fix is
+-- to anchor the visual end on the *previous* line at its byte
+-- length: that's past the last char of line1 (allowed by onemore)
+-- and the range then includes the trailing newline without
+-- grabbing line2.
 local function op_motion(method, direction)
   return function()
     local op = vim.v.operator
@@ -331,45 +322,23 @@ local function op_motion(method, direction)
   end
 end
 
--- Run the operator-pending motion for `direction` and apply `op`
--- (`'d'` / `'c'` / `'y'`). Called from the `<Cmd>lua ...<CR>` snippet
--- returned by `op_motion`; `op` is passed as an argument so this
--- function works the same way on the first call and on dot-repeat
--- (where `vim.v.operator` is no longer set).
--- Wrap the motion target from `(r, c)` to the next non-empty
--- line's first word end, or to the last empty line's col 0 if
--- only empty lines follow. Returns the new `(r, c)` or nil if
--- there is no next line at all.
+-- Wrap the motion target to the next non-empty line's first word
+-- end, or to the last empty line's col 0 if only empty lines follow.
 ---@param cut fun(line: string): table[]
 ---@param r integer 1-indexed line
 ---@param c integer 1-indexed byte (byte_end of the target word)
 ---@return integer?, integer?
 local function _wrap_op_forward(cut, r, c)
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  local found, last_empty = false, nil
-  for nr = r + 1, #lines do
-    local s = lines[nr]
-    if not s then
-      break
-    end
-    if #s == 0 then
-      last_empty = nr
-    else
-      for _, t in ipairs(cut(s)) do
-        if not is_whitespace(t) then
-          return nr, t.byte_end
-        end
-      end
-    end
-  end
-  if last_empty then
-    return last_empty, 0
+  local nr, _, be = _find_wrap_forward(lines, r + 1)
+  if nr then
+    return nr, be
   end
 end
 
--- True if cursor (col0, 0-indexed byte offset) is at the start
--- byte of the last char of `line`. Used to detect when nvim has
--- clamped the cursor from end-of-last-word back to that start byte.
+-- True when nvim has clamped the cursor to the start byte of the
+-- last char of `line` (it does this when the cursor was originally
+-- on the end of the last word).
 ---@param line string
 ---@param col0 integer
 ---@return boolean
@@ -383,7 +352,6 @@ end
 local function run_op(direction, op)
   local count = math.max(1, vim.v.count1)
   local row, col0 = unpack(vim.api.nvim_win_get_cursor(0))
-  -- Select the motion method once: same as the original op_motion body.
   local method = ({
     forward = M.motion.forward,
     backward = M.motion.backward,
@@ -391,10 +359,9 @@ local function run_op(direction, op)
     end_backward = M.motion.end_backward,
   })[direction]
   assert(method, 'unknown direction: ' .. tostring(direction))
-  -- For `c` with `w` (forward) motion, nvim treats it as `ce`:
-  -- delete the current word including its last char, but not
-  -- trailing whitespace. Use end_forward so the visual range
-  -- covers the current word only.
+  -- `c` with `w` (forward) is `ce`: delete the current word
+  -- including its last char, but not trailing whitespace. Use
+  -- end_forward so the visual range covers the current word only.
   local effective_method = method
   local effective_direction = direction
   if op == 'c' and direction == 'forward' then
@@ -407,50 +374,30 @@ local function run_op(direction, op)
   for _ = 1, count do
     local line = vim.api.nvim_get_current_line()
     c = effective_method(_cut, line, c)
-    -- Forward: when there is no next word on the current line,
-    -- only wrap to the next line when the count loop hasn't
-    -- finished (i.e. more motions are pending). The final
-    -- iteration that runs out of content stays at #line + 1
+    -- Forward wrap only fires while more motions are pending; the
+    -- final iteration that runs out of content stays at #line + 1
     -- (past the last character) without crossing the newline,
     -- matching stock Vim's operator-pending w semantics.
     if direction == 'forward' and c > #line then
-      -- For empty lines, nvim's `dw` wraps to the next line even on
-      -- the final iteration, so `dw` deletes the empty line. But
-      -- `cw` does NOT delete the line (it just changes "nothing"
-      -- to "nothing"). So only wrap for empty lines when the
-      -- operator is `d` (not `c`).
+      -- nvim's `dw` wraps past empty lines (joining them) but
+      -- `cw` doesn't (it would be "change nothing to nothing").
       local is_empty = #line == 0
       local is_delete = op == 'd'
       if _ < count or (is_empty and is_delete) then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local found = false
-        for nr = r + 1, #lines do
-          local s = lines[nr]
-          if not s then
-            break
-          end
-          for _, t in ipairs(_cut(s)) do
-            if not is_whitespace(t) then
-              r, c = nr, t.byte_start
-              found = true
-              break
-            end
-          end
-          if found then
-            break
-          end
-        end
-        if not found then
-          -- For `dw` on an empty line, advance to the next line and
-          -- clear `c` so the visual range spans the empty line(s).
-          -- The special case below performs the actual deletion.
+        local nr, bs = _find_wrap_forward(lines, r + 1)
+        if nr then
+          r, c = nr, bs
+        else
           if is_empty and is_delete then
+            -- Special case for `dw` on an empty line: advance to
+            -- the next line and clear `c` so the visual range
+            -- spans the empty line(s). The actual deletion happens
+            -- in the dw-on-empty-line block below.
             r = r + 1
             c = 0
             if r > #lines then
-              -- No next line to join with (dw on the very last line).
-              -- Stock nvim treats this as a no-op. Return without
-              -- setting up a visual range or scheduling a delete.
+              -- dw on the very last line is a stock no-op.
               return
             end
           else
@@ -464,30 +411,17 @@ local function run_op(direction, op)
       end
     elseif direction == 'backward' and c <= 1 and col0 == 0 then
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local found = false
-      for nr = r - 1, 1, -1 do
-        local s = lines[nr]
-        if not s then
-          break
-        end
-        for _, t in ipairs(_cut(s)) do
-          if not is_whitespace(t) then
-            r, c = nr, t.byte_start
-            found = true
-          end
-        end
-        if found then
-          break
-        end
-      end
-      if not found then
+      local nr, bs = _find_wrap_backward(lines, r - 1)
+      if nr then
+        r, c = nr, bs
+      else
         break
       end
     elseif direction == 'end_backward' and c <= 1 then
-      -- Stock nvim's ge from the end of the first word (or
-      -- from BOL) wraps to the previous line (even if empty).
-      -- For non-empty lines, target the start of the last
-      -- character. For empty lines, target col 0.
+      -- Stock nvim's `ge` from the end of the first word (or from
+      -- BOL) wraps to the previous line, even if empty. Non-empty
+      -- lines land on the start of the last char; empty lines on
+      -- col 0.
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
       local found = false
       for nr = r - 1, 1, -1 do
@@ -496,8 +430,8 @@ local function run_op(direction, op)
           break
         end
         if #s > 0 then
-          -- Target the START of the last character on the line
-          -- so the visual endpoint is always on a char boundary.
+          -- Target the lead byte of the last char so the visual
+          -- endpoint is always on a char boundary.
           r, c, found = nr, char_start(s, #s) - 1, true
         else
           r, c, found = nr, 0, true
@@ -508,7 +442,6 @@ local function run_op(direction, op)
         break
       end
     elseif effective_direction == 'end_forward' and c > #line then
-      -- Motion went past end-of-line. Wrap to next line.
       local new_r, new_c = _wrap_op_forward(_cut, r, c)
       if not new_r then
         break
@@ -520,11 +453,9 @@ local function run_op(direction, op)
       and #line > 0
       and _cursor_at_last_char_start(line, col0)
     then
-      -- Motion landed at #line (a word's byte_end on this line),
-      -- and the cursor is sitting at the start byte of the last
-      -- char of the line. nvim clamps the cursor to that start byte
-      -- whenever it was originally on the end of the last word, so
-      -- wrap here to match stock nvim's `de`/`ce` join behavior.
+      -- nvim clamps the cursor to the last char's start byte
+      -- whenever it was originally on the end of the last word;
+      -- wrap here to match stock `de`/`ce` join behavior.
       local new_r, new_c = _wrap_op_forward(_cut, r, c)
       if not new_r then
         break
@@ -533,9 +464,9 @@ local function run_op(direction, op)
     end
   end
   if r == row and c - 1 == col0 then
-    -- Motion didn't advance. For `d` (delete), abort. For `c`
-    -- (change), still enter insert mode (changing "nothing" to
-    -- "nothing" is valid, e.g. `cw` on an empty line).
+    -- Motion didn't advance. `d` aborts; `c` still enters insert
+    -- mode (changing "nothing" to "nothing" is valid, e.g. `cw`
+    -- on an empty line).
     if op ~= 'c' then
       return
     end
@@ -544,10 +475,9 @@ local function run_op(direction, op)
   local e_row, e_col
   if direction == 'backward' then
     s_row, s_col = r - 1, c - 1
-    -- For cross-line backward, anchor the visual end on the
-    -- line where the motion landed (col = byte length) so the
-    -- visual range stops at the trailing newline without
-    -- grabbing the first char of the cursor's line.
+    -- Cross-line backward: anchor the visual end on the previous
+    -- line at its byte length so the range stops at the trailing
+    -- newline without grabbing the first char of the cursor's line.
     if r < row then
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
       e_row, e_col = r - 1, #(lines[r] or '')
@@ -555,57 +485,40 @@ local function run_op(direction, op)
       e_row, e_col = row - 1, math.max(0, col0 - 1)
     end
   else
-    -- For end_backward, if col0 lands in the middle of a
-    -- multi-byte character, snap it forward to the end of that
-    -- character so the visual endpoint covers the full char
-    -- width (capped at line end - 1 to avoid including the
-    -- trailing newline). Only snap when the cursor is actually
-    -- inside a char (byte at col0+1 is a continuation byte).
+    -- For end_backward, if col0 lands mid-multi-byte-char, snap
+    -- forward to the next char boundary so the visual start
+    -- covers the full char width (capped at line end - 1 to
+    -- avoid including the trailing newline).
     if direction == 'end_backward' and col0 > 0 and col0 < orig_line_len then
       local b = string.byte(orig_line, col0 + 1)
       if b and b >= 0x80 and b < 0xC0 then
-        -- In the middle of a multi-byte char, snap forward to the
-        -- next char boundary so the visual start covers the full
-        -- char width. Cap at orig_line_len - 1 to avoid including
-        -- the trailing newline.
         col0 = math.min(char_end(orig_line, col0 + 2, orig_line_len) - 1, orig_line_len - 1)
       end
     end
     s_row, s_col = row - 1, col0
     if r > row then
       if effective_direction == 'end_forward' then
-        -- Cross-line end_forward: c is byte_end (1-indexed).
-        -- Use c - 1 as 0-indexed visual endpoint to land on the
-        -- last byte of the target word (consistent with
-        -- non-cross-line end_forward).
-        -- Special case: if c = 0 (empty line), use 0 directly.
+        -- Cross-line end_forward: c is byte_end (1-indexed);
+        -- c - 1 is the 0-indexed visual endpoint on the last byte
+        -- of the target word. c = 0 means empty line.
         e_row, e_col = r - 1, (c == 0) and 0 or math.max(0, c - 1)
       else
-        -- Cross-line forward: the visual end is on the target
-        -- line at c - 2 (exclusive of the next word's first
-        -- byte).  This matches stock Vim's exclusive motion
-        -- boundary: d deletes from cursor to just before the
-        -- motion target.
+        -- Cross-line forward: visual end is c - 2 (exclusive of
+        -- the next word's first byte) — stock Vim's exclusive
+        -- motion boundary.
         e_row, e_col = r - 1, math.max(0, c - 2)
       end
     elseif direction == 'end_backward' and r < row then
-      -- Cross-line end_backward: visual from the cursor
-      -- (s_row, s_col are already set to row-1, col0 above)
-      -- to the motion target on the previous line. With
-      -- virtualedit=onemore the cursor at e_col+1 includes
-      -- the target char, so the delete covers from the cursor
-      -- through the end of the target word, plus the newline.
-      -- This matches stock nvim's dge cross-line behaviour.
+      -- Cross-line end_backward: with virtualedit=onemore, cursor
+      -- at e_col+1 includes the target char, so the delete covers
+      -- from cursor through the end of the target word plus the
+      -- newline — stock nvim's dge cross-line behaviour.
       e_row, e_col = r - 1, c
     elseif effective_direction == 'end_forward' then
-      -- end_forward returns byte_end (1-indexed, inclusive).
-      -- Convert to 0-indexed column by subtracting 1.
       local target_col = math.max(0, c - 1)
-      -- For `cw`/`ce` when the cursor is on leading whitespace, the
-      -- motion normally jumps to the end of the next word. But the
-      -- user wants `cw` to consume the leading whitespace (e.g.
-      -- '   abc' -> 'abc'). Find the end of the leading whitespace
-      -- and use that instead.
+      -- `cw`/`ce` on leading whitespace should consume the ws
+      -- (e.g. '   abc' -> 'abc') instead of jumping to the end
+      -- of the next word.
       if direction == 'forward' and op == 'c' and col0 < #orig_line then
         if string.byte(orig_line, col0 + 1) == 0x20 then
           local ws_end = col0
@@ -619,31 +532,24 @@ local function run_op(direction, op)
       end
       e_row, e_col = r - 1, target_col
     elseif direction == 'end_backward' then
-      -- end_backward returns byte_end (1-indexed, inclusive) of
-      -- the previous word. Convert to 0-indexed by subtracting 1.
-      -- Snap to character boundary to avoid splitting multi-byte chars.
       local target_col = math.max(0, c - 1)
+      -- Snap to char boundary to avoid splitting multi-byte chars.
       if target_col > 0 and target_col < orig_line_len then
         local b = string.byte(orig_line, target_col + 1)
         if b and b >= 0x80 and b < 0xC0 then
-          -- In the middle of a multi-byte char, snap backward to
-          -- the char's lead byte.
           target_col = char_start(orig_line, target_col + 1) - 1
         end
       end
       e_row, e_col = r - 1, target_col
     else
-      -- forward returns byte_start of the next word.
       e_row, e_col = r - 1, math.max(0, c - 2)
     end
   end
   if s_row > e_row or (s_row == e_row and s_col > e_col) then
     s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
   end
-  -- Special case: change operator with empty visual range. Just
-  -- enter insert mode without deleting anything (matching
-  -- nvim's `cw` on an empty line or `ce` when cursor is already
-  -- at the end of a word).
+  -- Empty visual range under `c`: just enter insert mode
+  -- (matching nvim's `cw` on an empty line or `ce` at a word's end).
   if op == 'c' and s_row == e_row and s_col == e_col then
     vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
     vim.schedule(function()
@@ -651,11 +557,9 @@ local function run_op(direction, op)
     end)
     return
   end
-  -- Special case: `dw` on an empty line. nvim --clean deletes the
-  -- empty line (joining with the next line). The visual mode
-  -- approach doesn't work well for empty lines because the
-  -- cursor at col 0 of the next line gets clamped. Use `:delete _`
-  -- via normal! mode to delete the line.
+  -- `dw` on an empty line: nvim --clean joins with the next line.
+  -- Visual mode doesn't work here because the cursor at col 0 of
+  -- the next line gets clamped; use :delete _ via normal! instead.
   if direction == 'forward' and #orig_line == 0 and op == 'd' then
     local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
     if #lines > 1 then
@@ -670,29 +574,22 @@ local function run_op(direction, op)
     return
   end
   local cache_ve = vim.o.virtualedit
-  -- For same-line operations, don't use virtualedit. The cursor
-  -- at (row, col) is on the byte at that col. The visual range
-  -- is from anchor to cursor, inclusive. With virtualedit=onemore,
-  -- the cursor at col would be past the byte, including one
-  -- extra char. Use e_col directly (without +1) for same-line.
+  -- Same-line ops use e_col directly (cursor at (row, col) is on
+  -- the byte). Cross-line ops need virtualedit=onemore so the
+  -- cursor can sit one cell past the last byte of a line.
   if s_row ~= e_row then
     vim.o.virtualedit = 'onemore'
   end
   vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
   vim.cmd('normal! v')
   vim.api.nvim_win_set_cursor(0, { e_row + 1, e_col })
-  -- The visual selection has to stabilize (via a screen update) before
-  -- `normal! <op>` can operate on it correctly. The old implementation
-  -- split this into two `<Cmd>lua ...<CR>` blocks for the same reason.
-  -- vim.schedule defers the delete to the next event-loop tick.
+  -- vim.schedule defers to the next tick so the visual selection
+  -- stabilises before `normal! <op>` operates on it.
   vim.schedule(function()
     vim.cmd('normal! ' .. op)
-    -- For `c`, place the cursor at the start of the deleted range in
-    -- the new line. In insert mode the cursor can sit one cell past
-    -- the last byte of the line (which is what `s_col` becomes when
-    -- the deletion reaches the end of the line), which is where
-    -- newly typed text is inserted.
     if op == 'c' then
+      -- Place the cursor at the start of the deleted range; newly
+      -- typed text is inserted there.
       vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
     end
     vim.o.virtualedit = cache_ve
@@ -701,15 +598,13 @@ end
 
 -- Textobject handlers for `iw` (inner word) and `aw` (a word).
 -- Same pattern as op_motion: return a `<Cmd>lua ...<CR>` snippet
--- that builds a visual selection under `virtualedit=onemore`
--- and then runs the pending operator. In visual mode the same
--- Lua code is run synchronously and the operator branch is
--- skipped (the selection just extends the existing visual range).
+-- that builds a visual selection under virtualedit=onemore and
+-- runs the pending operator. In visual mode the same Lua code
+-- runs synchronously and the operator branch is skipped.
 
--- Find the CJK-aware word (or word + trailing ws for `aw`) at the
--- given 1-indexed byte column on a line. Returns nil when the cursor
--- is on whitespace or past the last token, so callers can bail
--- rather than mis-selecting the previous word.
+-- Returns nil when the cursor is on whitespace or past the last
+-- token, so callers can bail rather than mis-selecting the
+-- previous word.
 ---@param line string
 ---@param col_1 integer 1-indexed byte column (1-based; `#line + 1` is valid EOL)
 ---@param ai_type 'i'|'a'
@@ -725,9 +620,9 @@ local function find_text_object(line, col_1, ai_type)
   if col_1 > #line + 1 then
     return nil
   end
-  -- Cursor at one-past-last-byte (= `#line + 1`) is "at the end" of the
-  -- last token. nvim reports the mouse column this way when the cursor
-  -- sits exactly at the end of a line in insert mode.
+  -- nvim reports mouse column at `#line + 1` when the cursor sits
+  -- exactly at the end of a line in insert mode; treat that as
+  -- "on the last token".
   if col_1 == #line + 1 then
     col_1 = #line
   end
@@ -779,29 +674,23 @@ local function textobject(ai_type)
       return in_visual and '' or '<Esc>'
     end
 
-    -- Convert to cursor coordinates. nvim's live visual mode uses
-    -- "between chars" semantics — cursor at 0-indexed col C selects
-    -- bytes [anchor, C] — so the end column for 'hello' (bytes 1-5)
-    -- is col 4 (= `end_c - 2`), not col 5; `end_c - 1` would eat the
-    -- byte right after the word. CJK last chars are multi-byte, so
-    -- `e_col_0` may sit mid-byte; nvim clamps the cursor to the start
-    -- of that char and the visual area correctly covers the full char.
+    -- nvim's live visual mode uses "between chars" semantics: cursor
+    -- at 0-indexed col C selects bytes [anchor, C]. So the end col
+    -- for 'hello' (bytes 1-5) is col 4 (= end_c - 2), not col 5;
+    -- end_c - 1 would eat the byte right after the word.
     local s_row = row - 1
     local s_col_0 = start_c - 1
     local e_row = row - 1
     local e_col_0 = end_c - 2
 
     if in_visual then
-      -- Visual mode (`viw` / `vaw`): exit the current visual selection,
-      -- then rebuild it via `setpos('<, `>) + gv`. `'>` is the first
-      -- byte of the last CHAR of the visual area (per `:help '">`); for
-      -- CJK that means the lead byte of the last char, NOT the byte past
-      -- the word's last byte. `find_text_object` returns `end_c` as an
-      -- exclusive end (= 1 past the last byte of the word), so we must
-      -- snap it back to the lead byte of the previous char before
-      -- handing it to `setpos`. Without this snap, Vim keeps `end_c`
-      -- when it lands on a valid next-char boundary (which is the CJK
-      -- case) and `gv` extends the visual area one char too far.
+      -- `viw`/`vaw` rebuild the selection via setpos('<, `>) + gv.
+      -- `find_text_object` returns end_c as an exclusive end (= 1
+      -- past the last byte of the word); snap back to the lead byte
+      -- of the previous char before setpos. Without this snap Vim
+      -- keeps end_c when it lands on a valid next-char boundary
+      -- (the CJK case) and `gv` extends the visual area one char
+      -- too far.
       vim.api.nvim_feedkeys(
         vim.api.nvim_replace_termcodes('<Esc>', true, false, true),
         'mtx',
@@ -816,10 +705,8 @@ local function textobject(ai_type)
     if op ~= 'd' and op ~= 'c' and op ~= 'y' then
       return '<Esc>'
     end
-    -- Special case: change operator with empty visual range. Just
-    -- enter insert mode without deleting anything (matching
-    -- nvim's `cw` on an empty line or `ce` when cursor is already
-    -- at the end of a word).
+    -- Empty visual range under `c`: just enter insert mode
+    -- (matching nvim's `cw` on an empty line or `ce` at a word's end).
     if op == 'c' and s_row == e_row and s_col_0 == e_col_0 then
       local cache_ve = vim.o.virtualedit
       return string.format(
@@ -851,23 +738,20 @@ M.op_forward = op_motion(M.motion.forward, 'forward')
 M.op_backward = op_motion(M.motion.backward, 'backward')
 M.op_end_forward = op_motion(M.motion.end_forward, 'end_forward')
 M.op_end_backward = op_motion(M.motion.end_backward, 'end_backward')
--- Exposed so the `<Cmd>lua ...<CR>` snippet returned by op_motion can
--- dispatch into the same body without baking positions into the string.
--- This is what makes dot-repeat recompute the visual range against the
--- current cursor instead of replaying stale coordinates.
+-- Exposed so the `<Cmd>lua ...<CR>` snippet can dispatch into the
+-- same body without baking positions into the string — what makes
+-- dot-repeat recompute the visual range against the current cursor
+-- instead of replaying stale coordinates.
 M._run_op = run_op
 
--- Textobjects: bind these in 'x' (visual) and 'o' (operator-
--- pending) mode. In 'o' mode, `expr = true` is required.
+-- Bind in 'x' (visual) and 'o' (operator-pending). In 'o' mode,
+-- `expr = true` is required.
 M.textobject_inner_word = textobject('i')
 M.textobject_a_word = textobject('a')
 
--- CJK-aware text-object lookup: given a buffer + position, return
--- the byte range (1-indexed, inclusive / exclusive) of the
--- inner word (`ai = 'i'`) or word + trailing whitespace (`ai = 'a'`)
--- at that position. Returns nil when the position lands on
--- whitespace or past the last token (same behavior as the operator-
--- pending text object, which aborts rather than mis-select).
+-- CJK-aware text-object lookup. Returns nil on whitespace / past
+-- last token (same bail-on-fail behaviour as the operator-pending
+-- textobject).
 ---@class cword.TextObject
 ---@field buf integer buffer handle
 ---@field row integer 1-indexed row
@@ -918,10 +802,10 @@ function M.text_object(buf, row, col, ai)
 end
 
 -- Double-click word-selection helper. Bind it to `<2-LeftMouse>`
--- to select the CJK-aware word under the click (matching Vim's
--- built-in behavior for ASCII, but using `iskeyword` + cjdict
--- instead of `\w`). Like `find_start_of_word` + `find_end_of_word`
--- in `src/nvim/mouse.c`, but CJK-aware.
+-- Bind to `<2-LeftMouse>` to select the CJK-aware word under the
+-- click (matching Vim's built-in ASCII behaviour, but using
+-- iskeyword + cjdict instead of \w). Like find_start_of_word +
+-- find_end_of_word in src/nvim/mouse.c, but CJK-aware.
 ---@param buf integer buffer handle (0 for current)
 ---@param row integer 1-indexed line number
 ---@param col integer 0-indexed byte column
@@ -932,15 +816,12 @@ function M.double_click_select(buf, row, col, ai)
   if not obj then
     return false
   end
-  -- Drop any pending mode first so the marks apply cleanly.
   vim.cmd('normal! \\<Esc>')
-  -- `setpos` requires a 4-element list [bufnum, lnum, col, off]. `col`
-  -- is 1-indexed byte: `start` is the inclusive start of the word;
-  -- `'>` should be the first byte of the last CHAR of the visual area
-  -- (per `:help '">`). `end_excl` is one past the last byte of the
-  -- word — for CJK that's the lead byte of the NEXT char, which Vim
-  -- keeps as-is when `setpos` writes it. Snap back to the lead byte of
-  -- the previous char so the visual area covers exactly the word.
+  -- '> is the first byte of the last CHAR (`:help '">`), not 1
+  -- past the last byte of the word. end_excl is the latter, which
+  -- for CJK is the lead byte of the NEXT char; snap back to the
+  -- previous char's lead byte so the visual area covers exactly
+  -- the word.
   local line = vim.api.nvim_buf_get_lines(obj.buf, obj.row - 1, obj.row, false)[1] or ''
   vim.fn.setpos("'<", { obj.buf, obj.row, obj.start, 0 })
   vim.fn.setpos("'>", { obj.buf, obj.row, char_start(line, obj.end_excl - 1), 0 })
@@ -959,60 +840,24 @@ local function insert_move(method, direction)
     local line = vim.api.nvim_get_current_line()
     local target = method(_cut, line, cursor)
 
-    -- If forward returned past-end and the cursor is not yet at end
-    -- of line, move to end first. Only wrap on a subsequent call.
+    -- Forward past-end: snap to EOL first; only wrap on a
+    -- subsequent call.
     if is_fwd and target > #line and cursor <= #line then
       target = #line + 1
     elseif is_fwd and target > #line and cursor > #line then
-      -- Scan forward lines for the first non-whitespace token.
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local found = false
-      local r = row
-      for nr = r + 1, #lines do
-        local s = lines[nr]
-        if not s then
-          break
-        end
-        for _, t in ipairs(_cut(s)) do
-          if not is_whitespace(t) then
-            row, target, found = nr, t.byte_start, true
-            break
-          end
-        end
-        if found then
-          break
-        end
-        if #s == 0 then
-          row, target, found = nr, 1, true
-          break
-        end
-      end
-      if not found then
+      local nr, bs = _find_wrap_forward(lines, row + 1)
+      if nr then
+        row, target = nr, bs
+      else
         return
       end
     elseif not is_fwd and target <= 1 and col0 == 0 then
-      -- Scan backward lines for the last non-whitespace token.
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local found = false
-      for nr = row - 1, 1, -1 do
-        local s = lines[nr]
-        if not s then
-          break
-        end
-        for _, t in ipairs(_cut(s)) do
-          if not is_whitespace(t) then
-            row, target, found = nr, t.byte_end + 1, true
-          end
-        end
-        if found then
-          break
-        end
-        if #s == 0 then
-          row, target, found = nr, 1, true
-          break
-        end
-      end
-      if not found then
+      local nr, _, be = _find_wrap_backward(lines, row - 1)
+      if nr then
+        row, target = nr, be + 1
+      else
         return
       end
     end
@@ -1043,42 +888,32 @@ M.insert_delete_word = function()
     return
   end
 
-  -- Find the word before the cursor and delete it.
-  -- col0 is 0-indexed, byte positions are 1-indexed.
-  -- Stock nvim behavior: delete the word before cursor plus any
-  -- trailing whitespace between the word and cursor.
-  -- Stock nvim treats consecutive non-whitespace characters as a single word.
-  -- The insert start (where this insert session began typing) is also a
-  -- hard stop: appending `def` to `abc` only removes `def`, not the
-  -- whole combined `abcdef` word. nvim's `ins_bs` enforces this via
-  -- `Insstart_orig`; we mirror it with `_ins_start_col`.
+  -- Stock nvim deletes the word before cursor plus any trailing
+  -- whitespace between the word and cursor. The insert start
+  -- (where this session began typing) is a hard stop: appending
+  -- `def` to `abc` removes only `def`, not the combined `abcdef`
+  -- (nvim's `ins_bs` enforces this via `Insstart_orig`).
   local tokens = _cut(line)
   local word_start = nil
   local delete_end = col0
 
-  -- Only treat the insert start as a boundary when it's on this line
-  -- AND the cursor has actually moved past it (i.e. chars were typed
-  -- in this session). Without this guard, `<c-w>` fired the instant the
-  -- user enters insert mode would incorrectly refuse to delete pre-existing
-  -- text that the cursor was sitting on.
+  -- Only treat the insert start as a boundary when the cursor
+  -- has actually moved past it (chars were typed in this session).
+  -- Without this, <c-w> fired the instant insert mode opens would
+  -- refuse to delete the pre-existing text under the cursor.
   local ins_col = -1
-  if _ins_start_line == row and col0 > _ins_start_col then
-    ins_col = _ins_start_col
+  if vim.b.cword_ins_start and col0 > vim.b.cword_ins_start then
+    ins_col = vim.b.cword_ins_start
   end
 
-  -- First, skip any trailing whitespace before the cursor
-  local word_end_idx = nil
   for i = #tokens, 1, -1 do
     local t = tokens[i]
     local t_end_0 = t.byte_end - 1
 
     if t_end_0 < col0 then
-      -- This token is before the cursor
       if is_whitespace(t) then
-        -- Skip whitespace, continue looking for word
+        -- skip whitespace, keep looking
       else
-        -- Found a non-whitespace token, this is the end of the word
-        word_end_idx = i
         word_start = t.byte_start - 1
         if ins_col > word_start then
           word_start = ins_col
@@ -1086,10 +921,7 @@ M.insert_delete_word = function()
         break
       end
     elseif t.byte_start - 1 < col0 and t_end_0 >= col0 then
-      -- Cursor is inside this token
       if not is_whitespace(t) then
-        -- This is the end of the word
-        word_end_idx = i
         word_start = t.byte_start - 1
         if ins_col > word_start then
           word_start = ins_col
@@ -1100,10 +932,8 @@ M.insert_delete_word = function()
   end
 
   if word_start == nil then
-    -- No word found before the cursor. If the cursor is at the
-    -- start of a word (e.g. '  hello|' where cursor is at start
-    -- of 'hello'), or if the cursor is in whitespace before the
-    -- first word, delete the leading whitespace up to the cursor.
+    -- Cursor at the start of a word or in leading whitespace before
+    -- any word: delete the leading whitespace up to the cursor.
     for _, t in ipairs(_cut(line)) do
       if t.byte_start - 1 == col0 and not is_whitespace(t) then
         word_start = 0
@@ -1111,8 +941,6 @@ M.insert_delete_word = function()
       end
     end
     if word_start == nil and col0 > 0 then
-      -- Cursor is in leading whitespace before any word. Delete
-      -- the whitespace up to the cursor.
       for _, t in ipairs(_cut(line)) do
         if not is_whitespace(t) and t.byte_start - 1 > 0 then
           word_start = 0
@@ -1121,8 +949,7 @@ M.insert_delete_word = function()
       end
     end
     if word_start == nil and col0 >= #line then
-      -- Cursor is at or past the end of a whitespace-only line.
-      -- Delete the entire line content.
+      -- Cursor on a whitespace-only line: delete the whole line.
       local all_ws = true
       for _, t in ipairs(_cut(line)) do
         if not is_whitespace(t) then
@@ -1139,15 +966,7 @@ M.insert_delete_word = function()
     end
   end
 
-  -- Set word_end_idx if not already set (leading whitespace case).
-  if word_end_idx == nil then
-    word_end_idx = 1
-  end
-
-  -- Delete from word_start to col0 (including any whitespace between the word and cursor)
   local row1 = row - 1
-  -- Yank into the small-delete register now, then schedule
-  -- the buffer mutation with an undo breakpoint.
   vim.fn.setreg(
     '-',
     (vim.api.nvim_buf_get_text(0, row1, word_start, row1, delete_end, {})[1] or '')
@@ -1180,29 +999,20 @@ end
 M.cmdline_delete_word = function()
   local line = vim.fn.getcmdline()
   local pos = vim.fn.getcmdpos()
-
-  -- pos is 1-indexed and points to the cursor position.
-  -- We want to delete the word before the cursor.
   local tokens = _cut(line)
-  local target = pos - 1 -- 0-indexed position to delete from
+  local target = pos - 1 -- 0-indexed byte to delete from
 
-  -- Find the word before the cursor
   for i = #tokens, 1, -1 do
     local t = tokens[i]
     if t.byte_end < pos then
-      -- Token is before cursor
+      target = t.byte_start - 1
       if is_whitespace(t) then
-        -- Skip whitespace
-        target = t.byte_start - 1
+        -- keep looking for the word, but eat the whitespace
       else
-        -- Found a word, delete from its start
-        target = t.byte_start - 1
         break
       end
     elseif t.byte_start < pos and t.byte_end >= pos then
-      -- Cursor is inside this token
       if not is_whitespace(t) then
-        -- Delete from start of this word to cursor
         target = t.byte_start - 1
         break
       end
@@ -1213,24 +1023,18 @@ M.cmdline_delete_word = function()
     return
   end
 
-  -- Yank the deleted substring into the small-delete register,
-  -- mirroring insert_delete_word. target is 0-indexed, pos is
-  -- 1-indexed, so the deleted region is [target+1, pos-1].
+  -- Mirror insert_delete_word's yank into the small-delete register.
   vim.fn.setreg('-', line:sub(target + 1, pos - 1))
-
-  -- target is 0-indexed, pos is 1-indexed.
-  -- Delete from target+1 to pos-1 (inclusive) in 1-indexed terms.
   vim.fn.setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
 end
 
 -- CJK-aware cword lookup.
 --
 -- `expand('<cword>')` only sees `iskeyword` bytes, so on a CJK line it
--- returns a single character and search tools like vim-asterisk end up
--- highlighting one char at a time. These walk the same token stream
--- that w/b/e/ge use, so "the current word" is whatever w would treat
--- as a word — a merged CJK run for "你好世界", a single identifier for
--- "hello", etc.
+-- returns one character and search tools like vim-asterisk highlight
+-- one char at a time. These walk the same token stream w/b/e/ge use,
+-- so "the current word" matches what `w` would treat as a word — a
+-- merged CJK run for "你好世界", a single identifier for "hello".
 
 ---@return table?
 local function token_at_cursor()
@@ -1249,18 +1053,18 @@ local function token_at_cursor()
       last_word = t
     end
   end
-  -- Cursor one cell past the last byte (`virtualedit` allows this);
+  -- Cursor one cell past the last byte (virtualedit allows this):
   -- if the line ends on a word, return that word to match
-  -- `expand('<cword>')`.
+  -- expand('<cword>').
   if last_word and last_word.byte_end == #line then
     return last_word
   end
   return nil
 end
 
----CJK-aware word under the cursor. Mirrors |expand('<cword>')| (empty
----string when the cursor is not on a word token); the only difference
----is CJK content, where it returns the merged run instead of one char.
+---CJK-aware word under the cursor. Mirrors `expand('<cword>')` (empty
+---string when not on a word token); the difference is CJK content,
+---where it returns the merged run instead of one char.
 ---@return string
 function M.get_cword()
   local tok = token_at_cursor()
@@ -1270,8 +1074,7 @@ function M.get_cword()
   return tok.text
 end
 
----Full token under the cursor (text + byte offsets + is_word_like).
----Returns nil on whitespace or non-word non-whitespace tokens.
+---Full token under the cursor. Nil on whitespace or non-word non-ws.
 ---@return { text: string, byte_start: integer, byte_end: integer, is_word_like: boolean }?
 function M.get_token()
   return token_at_cursor()

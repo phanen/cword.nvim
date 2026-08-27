@@ -1,26 +1,8 @@
--- Word segmentation via ICU (libicuuc) + LuaJIT FFI.
+-- Word segmentation via ICU (libicuuc) + LuaJIT FFI. Output matches
+-- V8's `Intl.Segmenter`, e.g. "你好世界" -> [你好, 世界],
+-- "南京市长江大桥" -> [南京市, 长江, 大, 桥].
 --
--- Calls the real ICU library — the same code path V8 uses for
--- `Intl.Segmenter` — so the output matches JavaScript's
--- Intl.Segmenter byte-for-byte:
---
---   "你好世界"      -> [你好, 世界]          (cjdict.txt merge)
---   "南京市长江大桥" -> [南京市, 长江, 大, 桥] (Viterbi DP result)
---
--- The icu major version is detected at load time by probing for
--- versioned symbol names (`ubrk_close_80` down to `ubrk_close_50`)
--- via the FFI loader. The binding follows whatever major version
--- libicuuc.so happens to expose.
---
--- UTF-16 -> UTF-8 byte conversion prefers vim.str_byteindex when it
--- is available in the running Lua context, and falls back to a
--- pure-Lua walker otherwise. The fallback matters under nvim-test's
--- runner harness, where `vim.str_byteindex` is nil but the target
--- nvim has it (and vice versa for plain Lua + busted runs).
---
--- Token shape:
---   { text, byte_start, byte_end, is_word_like }
---
+-- Token shape: { text, byte_start, byte_end, is_word_like }.
 -- byte_start/byte_end are 1-indexed and inclusive so that
 -- string.sub(s, byte_start, byte_end) recovers the text exactly.
 
@@ -28,19 +10,15 @@ local M = {}
 
 local ffi = require('ffi')
 
--- ---------------------------------------------------------------------------
--- Version probe
--- ---------------------------------------------------------------------------
-
 local function detect_icu_version()
   local ok, icu = pcall(ffi.load, 'icuuc')
   if not ok then
     return nil, icu
   end
 
-  -- Scan high-to-low so the newest installed version wins. We probe
-  -- ubrk_close_<N> via the loaded library userdata, not ffi.C (the
-  -- latter is for the default C namespace, not dlopen'd libraries).
+  -- Probe via the loaded userdata (not ffi.C, which is the default
+  -- C namespace, not dlopen'd libraries). Scan high-to-low so the
+  -- newest installed version wins.
   for v = 80, 50, -1 do
     local sym = 'ubrk_close_' .. v
     pcall(function()
@@ -82,76 +60,44 @@ int32_t ubrk_next_]] .. ICU_VER .. [[(UBreakIterator* bi);
 
 M._icu_version = ICU_VER
 
--- ---------------------------------------------------------------------------
--- UTF-16 -> UTF-8 byte conversion
--- ---------------------------------------------------------------------------
-
--- vim.str_byteindex is available in Neovim >= 0.10 but not in plain
--- Lua / busted / nvim-test's runner harness. Fall back to a pure-Lua
--- walker when it's missing.
-local HAS_STR_BYTEINDEX = type(vim) == 'table' and type(vim.str_byteindex) == 'function'
-
-local function utf16_to_byte_native(str, target_u16)
+local function utf16_to_byte(str, target_u16)
   return vim.str_byteindex(str, 'utf-16', target_u16, false)
 end
 
-local function utf16_to_byte_fallback(str, target_u16)
-  -- Walk the string, counting UTF-16 code units (ASCII = 1, BMP = 1,
-  -- surrogate pair = 2). Stop when we reach the target code unit.
-  -- Returns 0-indexed byte offset (matches vim.str_byteindex strict=false).
-  local i = 1
-  local u = 0
-  local len = #str
-  while i <= len and u < target_u16 do
-    local b1 = string.byte(str, i)
-    if b1 < 0x80 then
-      i = i + 1
-    elseif b1 < 0xE0 then
-      i = i + 2
-    elseif b1 < 0xF0 then
-      i = i + 3
-    else
-      i = i + 4
-    end
-    if b1 >= 0xF0 then
-      u = u + 2
-    else
-      u = u + 1
-    end
-  end
-  if u == target_u16 then
-    return i - 1
-  end
-  -- target_u16 is past end
-  return len
-end
-
-local utf16_to_byte = HAS_STR_BYTEINDEX and utf16_to_byte_native or utf16_to_byte_fallback
-
--- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
-
 local iskeyword = require('cword.util.iskeyword')
 
+-- Codepoint ranges always considered word-like, regardless of iskeyword.
+local CJK_RANGES = {
+  { 0x3400, 0x4DBF }, -- CJK Extension A
+  { 0x4E00, 0x9FFF }, -- CJK ideographs
+  { 0x3040, 0x309F }, -- Hiragana
+  { 0x30A0, 0x30FF }, -- Katakana
+  { 0xAC00, 0xD7A3 }, -- Hangul syllables
+}
+
+local function is_cjk(cp)
+  for _, r in ipairs(CJK_RANGES) do
+    if cp >= r[1] and cp <= r[2] then
+      return true
+    end
+  end
+  return false
+end
+
+---@param s string
+---@param byte_idx integer 1-indexed byte column
+---@return boolean
 local function is_word_like_at(s, byte_idx)
   local b1 = string.byte(s, byte_idx)
   if not b1 then
     return false
   end
 
-  -- CJK symbols & punctuation: never word-like (U+3000..U+303F).
-  if b1 == 0xE3 then
-    local b2 = string.byte(s, byte_idx + 1) or 0
-    if b2 == 0x80 then
-      local b3 = string.byte(s, byte_idx + 2) or 0
-      if b3 >= 0x80 and b3 <= 0xBF then
-        return false
-      end
-    end
+  -- CJK symbols & punctuation (U+3000..U+303F) and fullwidth forms
+  -- (U+FF00..U+FFEF) are never word-like.
+  if b1 == 0xE3 and string.byte(s, byte_idx + 1) == 0x80 then
+    return false
   end
-
-  -- Fullwidth forms: never word-like (U+FF00..U+FFEF).
   if b1 == 0xEF then
     local b2 = string.byte(s, byte_idx + 1) or 0
     if (b2 >= 0xBC and b2 <= 0xBF) or b2 == 0xBD then
@@ -159,13 +105,16 @@ local function is_word_like_at(s, byte_idx)
     end
   end
 
-  -- Decode codepoint for the CJK and iskeyword checks.
-  local cp
   if b1 < 0x80 then
-    cp = b1
-  elseif b1 < 0xE0 then
-    local b2 = string.byte(s, byte_idx + 1) or 0
-    cp = ((b1 - 0xC0) * 0x40) + (b2 - 0x80)
+    return iskeyword.is_keyword(b1)
+  end
+
+  -- Multi-byte: decode the codepoint in place. nvim's vim.fn.strcharpart
+  -- is char-indexed and vim.str_utfindex is O(n) per call, so for this
+  -- per-byte helper the in-line decoder is faster.
+  local cp
+  if b1 < 0xE0 then
+    cp = ((b1 - 0xC0) * 0x40) + (string.byte(s, byte_idx + 1) - 0x80)
   elseif b1 < 0xF0 then
     local b2 = string.byte(s, byte_idx + 1) or 0
     local b3 = string.byte(s, byte_idx + 2) or 0
@@ -176,19 +125,7 @@ local function is_word_like_at(s, byte_idx)
     local b4 = string.byte(s, byte_idx + 3) or 0
     cp = ((b1 - 0xF0) * 0x40000) + ((b2 - 0x80) * 0x1000) + ((b3 - 0x80) * 0x40) + (b4 - 0x80)
   end
-
-  -- CJK ideographs, hiragana/katakana, hangul: always word-like.
-  if
-    (cp >= 0x4E00 and cp <= 0x9FFF)
-    or (cp >= 0x3400 and cp <= 0x4DBF)
-    or (cp >= 0x3040 and cp <= 0x309F)
-    or (cp >= 0x30A0 and cp <= 0x30FF)
-    or (cp >= 0xAC00 and cp <= 0xD7A3)
-  then
-    return true
-  end
-
-  return iskeyword.is_keyword(cp)
+  return is_cjk(cp) or iskeyword.is_keyword(cp)
 end
 
 local function to_utf16(s)
@@ -206,15 +143,14 @@ local function to_utf16(s)
   return buf, n
 end
 
--- ICU's UAX#29 word segmentation splits ASCII lines on chars like '-'
--- even when the user has included them in 'iskeyword'. The
--- per-ICU-token post-processing above can only refine within an ICU
--- token, not merge across them, so spans covering nothing but ASCII
--- need a second pass driven by is_word_like_at. Spans that touch any
--- multi-byte byte (CJK, kana, hangul, Latin extended, etc.) are left
--- alone — ICU's cjdict / Viterbi is authoritative for them (e.g.
--- "你好世界" -> "你好|世界"), and is_word_like_at would collapse all
--- CJK into a single run anyway.
+-- ICU's UAX#29 splits ASCII lines on chars like '-' even when the
+-- user has included them in 'iskeyword', and the per-ICU-token
+-- post-processing above can only refine within a token — it can't
+-- merge across them. Pure-ASCII spans therefore need a second
+-- pass driven by is_word_like_at. Spans touching any multi-byte
+-- byte are left to ICU: its cjdict / Viterbi is authoritative
+-- (e.g. "你好世界" -> "你好|世界"), and is_word_like_at would
+-- collapse all CJK into one run anyway.
 ---@param line string
 ---@param tokens table[]
 ---@return table[]
@@ -264,7 +200,7 @@ local function resegment_ascii(line, tokens)
             pos = pos + 1
           end
         else
-          -- Non-word run: walk until a word-like char or a ws/non-ws
+          -- Non-word run: split on a word-like char OR on a ws/non-ws
           -- boundary inside the run. This mirrors the merge pass's
           -- "don't merge across whitespace" rule: `->` stays one
           -- token, but the spaces between two `->` runs are not
@@ -302,7 +238,6 @@ end
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
-
 ---@param str string
 ---@return table[]
 function M.cut(str)

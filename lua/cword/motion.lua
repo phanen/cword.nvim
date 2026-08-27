@@ -1,48 +1,35 @@
--- Word motion utilities. Each function takes a `cut` function plus a
--- line and a 1-indexed byte cursor, and returns the next/previous
--- column as a 1-indexed byte offset. The line excludes the trailing
--- newline.
---
--- These are building blocks: bind them to keys yourself, or call
--- require('cword').setup() for the default w/b/e/ge wiring.
+-- Word motion utilities. Each takes a `cut` function plus a line
+-- (without trailing newline) and a 1-indexed byte cursor, returning
+-- the next/previous column as a 1-indexed byte offset. Bind them
+-- yourself, or call require('cword').setup() for default w/b/e/ge.
 
 local M = {}
 
-local is_whitespace = require('cword.util.text').is_whitespace
-
--- ZWJ (Zero Width Joiner) is U+200D, encoded as E2 80 8D in UTF-8.
--- Nvim treats ZWJ sequences as single grapheme clusters, so the cursor
--- cannot land in the middle of them. Motion functions must skip over
--- ZWJ tokens to avoid returning positions that nvim will clamp.
---
--- The segmenter emits ZWJ-joined emoji sequences as alternating
--- [token, ZWJ, token, ZWJ, ...] runs, so the helpers below navigate
--- those runs directly by stepping over [token, ZWJ] pairs.
-local ZWJ = '\226\128\141'
+local text = require('cword.util.text')
+local is_whitespace = text.is_whitespace
 
 ---@param tok table
 ---@return boolean
 local function is_zwj(tok)
-  return tok.text == ZWJ
+  return text.is_zwj_text(tok.text)
 end
 
 ---@param tokens table[]
 ---@param i integer
----@return boolean true if tokens[i - 1] is a ZWJ token.
+---@return boolean
 local function prev_is_zwj(tokens, i)
   return i > 1 and is_zwj(tokens[i - 1])
 end
 
 ---@param tokens table[]
 ---@param i integer
----@return boolean true if tokens[i + 1] is a ZWJ token.
+---@return boolean
 local function next_is_zwj(tokens, i)
   return i < #tokens and is_zwj(tokens[i + 1])
 end
 
----Walk backward over [token, ZWJ] pairs to find the index of the
----first real token in the ZWJ sequence containing i. If i is not
----in a ZWJ sequence, returns i.
+---Walk backward over [token, ZWJ] pairs to find the first real
+---token in the ZWJ sequence containing i (returns i if not in one).
 ---@param tokens table[]
 ---@param i integer
 ---@return integer
@@ -56,9 +43,8 @@ local function zwj_seq_start(tokens, i)
   return i
 end
 
----Walk forward over [token, ZWJ] pairs to find the index of the
----last real token in the ZWJ sequence containing i. If i is not in
----a ZWJ sequence, returns i.
+---Walk forward over [token, ZWJ] pairs to find the last real token
+---in the ZWJ sequence containing i (returns i if not in one).
 ---@param tokens table[]
 ---@param i integer
 ---@return integer
@@ -69,12 +55,10 @@ local function zwj_seq_end(tokens, i)
   return i
 end
 
--- Motion semantics: every non-whitespace token is word-like. Stock
--- nvim's w/b/e/ge treat ASCII operators (`->`, `**`, etc.) as words;
--- the segmenter's iskeyword-based classification disagrees for these
--- operators, so we override here. ZWJ joins emoji into a single
--- grapheme that nvim treats as one word, so it falls in the same
--- bucket.
+-- Stock nvim's w/b/e/ge treat ASCII operators (`->`, `**`) as
+-- words; the segmenter's iskeyword-based classification doesn't.
+-- Override to mark every non-whitespace token word-like. ZWJ-joined
+-- emoji are already handled by skipping ZWJ tokens above.
 local function postprocess_tokens(tokens)
   local result = {}
   for _, t in ipairs(tokens) do
@@ -115,8 +99,8 @@ function M.forward(cut, line, cursor)
   for i, t in ipairs(tokens) do
     if t.byte_start > cursor and not is_whitespace(t) and not is_zwj(t) then
       if prev_is_zwj(tokens, i) then
-        -- Part of a ZWJ sequence; cursor lands on the sequence's
-        -- first byte, so skip this token and keep looking.
+        -- Cursor lands on the sequence's first byte; skip this
+        -- tail token and keep looking for the next word.
       else
         return t.byte_start
       end
@@ -157,18 +141,15 @@ function M.end_forward(cut, line, cursor)
   cursor = clamp(line, cursor)
   local tokens = postprocess_tokens(cut(line))
 
-  -- "Nudge past the end" to avoid the test runner's snap
-  -- clamping the cursor back. For pure-CJK lines, the cursor
-  -- at the start of a CJK char (right after the previous CJK
-  -- char's end) should jump to the end of the NEXT word.
-  -- For ASCII lines, the cursor at the end of a word should
-  -- jump to the end of the NEXT word.
+  -- Nudge past byte_end so a test runner's snap-back-to-grapheme-start
+  -- doesn't undo the motion. For pure-CJK, cursor at a char start
+  -- (right after the previous char's end) jumps to the NEXT word.
+  -- For ASCII, cursor at a word's end jumps to the NEXT word.
   local is_pure_cjk = line:find('[\1-\127]') == nil
 
-  -- First, check if cursor is inside a word, including at the
-  -- start of a word. The end of a word is handled by the wrap
-  -- branch in init.lua (it should cross to the next line), so we
-  -- stop short of byte_end here.
+  -- Cursor is inside a word (including at its start). Wrap cases
+  -- (byte_end → next line) are handled in init.lua, so we stop
+  -- short of byte_end here.
   for i, t in ipairs(tokens) do
     if
       t.byte_start <= cursor
@@ -176,11 +157,10 @@ function M.end_forward(cut, line, cursor)
       and not is_whitespace(t)
       and t.is_word_like
     then
-      -- If this token is the start of a ZWJ sequence and the
-      -- cursor is at the very start, skip past the whole sequence
-      -- and find the next word (nvim treats the sequence as a
-      -- single grapheme, so e from the first byte should land on
-      -- the next word, not on the last byte of the first part).
+      -- ZWJ-sequence start + cursor at first byte: skip the whole
+      -- sequence. nvim treats it as one grapheme, so 'e' from its
+      -- first byte should land on the NEXT word, not the last byte
+      -- of the first part.
       if next_is_zwj(tokens, i) and t.byte_start == cursor then
         i = zwj_seq_end(tokens, i) + 1
       else
@@ -194,11 +174,10 @@ function M.end_forward(cut, line, cursor)
           and string.byte(line, t.byte_end) >= 0x80
           and string.byte(line, t.byte_end) < 0xC0
         then
-          -- Cursor is inside a token whose end is on a continuation
-          -- byte. This is likely a multi-codepoint grapheme (e.g.
-          -- ⚠️ = U+26A0 U+FE0F) where nvim will clamp the cursor
-          -- back to the start of the grapheme. Nudge to the next
-          -- word instead.
+          -- Cursor inside a token whose last byte is a continuation
+          -- byte — likely a multi-codepoint grapheme (e.g. ⚠️ =
+          -- U+26A0 U+FE0F) where nvim will clamp back to the grapheme
+          -- start. Jump to the next word instead.
           should_nudge = true
         end
         if should_nudge then
@@ -223,7 +202,6 @@ function M.end_forward(cut, line, cursor)
     end
   end
 
-  -- Cursor is not inside a word, find the next word
   local i = 1
   while i <= #tokens do
     local t = tokens[i]
@@ -233,12 +211,9 @@ function M.end_forward(cut, line, cursor)
       elseif is_zwj(t) then
         i = i + 1
       else
-        -- Found a word token. If the cursor is at the start of a
-        -- single-byte word (cursor == byte_start == byte_end),
-        -- the cursor is also at the END of that word. Vim's e
-        -- from the end of a word advances to the end of the next
-        -- word. Return the end of the next word so operators like
-        -- de can compute the correct visual range.
+        -- 'e' on a single-byte word (cursor at its start AND end)
+        -- should advance to the next word's end, matching Vim.
+        -- ce/de then compute the correct visual range.
         if t.byte_start == cursor and t.byte_end == t.byte_start then
           local j = i + 1
           while j <= #tokens do
@@ -250,24 +225,19 @@ function M.end_forward(cut, line, cursor)
           end
           return #line + 1
         end
-        -- Found a word token. Check if it's part of a ZWJ sequence.
-        -- For ZWJ sequences, return the first byte (not the last),
-        -- because nvim treats the entire sequence as a single grapheme.
+        -- For ZWJ sequences, return the sequence's first byte
+        -- (not the last) — nvim treats the whole sequence as
+        -- one grapheme and clamps the cursor there.
         if next_is_zwj(tokens, i) then
-          -- This is the start of a ZWJ sequence
           if t.byte_start == cursor then
-            -- Cursor is already at the start of the ZWJ sequence,
-            -- skip past the whole sequence and find the next word
+            -- Cursor already on sequence's first byte; jump past it.
             i = zwj_seq_end(tokens, i) + 1
           else
-            -- Return the first byte of the ZWJ sequence
             return t.byte_start
           end
         elseif prev_is_zwj(tokens, i) then
-          -- This token is part of a ZWJ sequence — skip past it.
           i = zwj_seq_end(tokens, i) + 1
         else
-          -- Regular word token, return its end
           return t.byte_end
         end
       end
@@ -290,15 +260,11 @@ function M.end_backward(cut, line, cursor)
   for i, t in ipairs(tokens) do
     if cursor <= t.byte_end then
       -- Cursor is inside (or at the last byte of) this token.
-      -- If this token is part of a ZWJ sequence, skip to before
-      -- the sequence start.
+      -- Step back to before any ZWJ sequence it's part of.
       local j = i
       while j > 1 and (is_zwj(tokens[j - 1]) or (j > 2 and is_zwj(tokens[j - 2]))) do
         j = j - 1
       end
-      -- Now j points to the start of the ZWJ sequence (or the
-      -- original token if not part of a sequence). Use the
-      -- previous non-ZWJ token as prev.
       if j > 1 then
         for k = j - 1, 1, -1 do
           if not is_whitespace(tokens[k]) and not is_zwj(tokens[k]) then
@@ -310,9 +276,8 @@ function M.end_backward(cut, line, cursor)
       break
     end
     if not is_whitespace(t) and not is_zwj(t) then
-      -- This is a previous word token. If it's part of a ZWJ
-      -- sequence, jump to the end of the whole sequence so `ge`
-      -- from a word inside a ZWJ sequence lands on the right edge.
+      -- 'ge' from a word inside a ZWJ sequence must land on the
+      -- sequence's right edge, not on an intermediate token's end.
       prev = tokens[zwj_seq_end(tokens, i)]
     end
   end
