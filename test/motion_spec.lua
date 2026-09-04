@@ -184,7 +184,24 @@ describe('motion b (icu_ffi)', function()
     helpers.api.nvim_buf_set_lines(0, 0, -1, false, { 'hello world', 'foo bar' })
     helpers.api.nvim_win_set_cursor(0, { 2, 0 })
     helpers.feed('b')
-    eq(10, col0()) -- on 'd' of first line
+    eq(6, col0()) -- on 'w' of 'world' (stock nvim lands on byte_start)
+  end)
+
+  it('b on { in C-style function body wraps to prev word', function()
+    -- From a non-word char like '{', b crosses the empty line to
+    -- the immediately previous line (line 3). Stock lands on the
+    -- trailing `)` of `closed)` — the byte just past the last
+    -- word's last byte — not on the start of `closed`.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, {
+      'int foo(int a, int b, int mask) { return a ^ ((a ^ b) & mask); }',
+      '',
+      'static void nsvg__addPath(NSVGparser* p, char closed)',
+      '{ // cursor here',
+    })
+    helpers.api.nvim_win_set_cursor(0, { 4, 0 })
+    helpers.feed('b')
+    eq(3, row())
+    eq(52, col0()) -- on ')' after 'closed' (byte_end+1 of 'closed')
   end)
 end)
 

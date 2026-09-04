@@ -11,6 +11,7 @@ local is_multi_codepoint_grapheme = text.is_multi_codepoint_grapheme
 local has_vs16 = text.has_vs16
 local whitespace_between = text.whitespace_between
 local next_non_whitespace_end = text.next_non_whitespace_end
+local is_keyword = require('cword.util.iskeyword').is_keyword
 
 local _cut = M.Segmenter.cut
 
@@ -133,36 +134,74 @@ local function _find_wrap_forward(lines, start_r)
   end
 end
 
+-- Scan only the line at `start_r` (not all preceding lines). Stock
+-- vim's `b` looks at the immediately previous line and lands on
+-- byte_start of the last word when its last byte is a word byte,
+-- or byte_end of the last word when its last byte is a non-word
+-- non-ws char (so the cursor sits on the non-word char that follows
+-- the last word — matches stock's eol-then-b-b-b stepping).
 ---@param lines string[]
 ---@param start_r integer
----@return integer?, integer?, integer?
+---@return integer? nr  1-indexed line
+---@return integer? bs  1-indexed byte_start of last non-ws token
+---@return integer? be  1-indexed byte_end of last non-ws token
+-- Scan only the line at `start_r` (not all preceding lines). Stock
+-- vim's `b` looks at the immediately previous line and lands on
+-- byte_start of the last word when its last byte is a word byte,
+-- or byte_end of the last word when its last byte is a non-word
+-- non-ws char (so the cursor sits on the non-word char that follows
+-- the last word — matches stock's eol-then-b-b-b stepping).
+---@param lines string[]
+---@param start_r integer
+---@return integer? nr  1-indexed line
+---@return integer? bs  1-indexed byte_start of last non-ws token
+---@return integer? be  1-indexed byte_end of last non-ws token
 local function _find_wrap_backward(lines, start_r)
-  local last_empty
-  local found_nr, found_bs, found_be
-  for nr = start_r, 1, -1 do
-    local s = lines[nr]
-    if not s then
-      break
-    end
-    if #s == 0 then
-      last_empty = nr
-    else
-      for _, t in ipairs(_cut(s)) do
-        if not is_whitespace(t) then
-          last_empty = nil
-          found_nr = nr
-          found_bs = t.byte_start
-          found_be = t.byte_end
-        end
-      end
+  local s = lines[start_r]
+  if not s or #s == 0 then
+    return start_r, 1, 0
+  end
+  local toks = _cut(s)
+  local last_nw
+  for _, t in ipairs(toks) do
+    if not is_whitespace(t) then
+      last_nw = t
     end
   end
-  if last_empty then
-    return last_empty, 1, 0
+  if not last_nw then
+    return start_r, 1, 0
   end
-  if found_nr then
-    return found_nr, found_bs, found_be
+  return start_r, last_nw.byte_start, last_nw.byte_end
+end
+
+-- For `b`: when previous line ends with a word byte OR with a
+-- multi-byte (CJK, emoji, etc.) byte, the cursor sits on the
+-- last word's first byte (`bs`); when it ends with a non-word,
+-- non-whitespace ASCII byte (e.g. `)`, `}`), the cursor sits on
+-- the trailing non-word char (the last byte of the previous
+-- line = byte_end of the trailing token).
+---@param prev_line string
+---@param bs integer 1-indexed byte_start of last non-ws token
+---@param be integer 1-indexed byte_end of last non-ws token
+---@return integer 1-indexed byte to land cursor on (col + 1)
+local function _bwd_wrap_col(prev_line, bs, be)
+  local last_byte = string.byte(prev_line, char_start(prev_line, #prev_line))
+  local is_word_or_multibyte = last_byte and (last_byte >= 0x80 or is_keyword(last_byte))
+  return is_word_or_multibyte and bs or be
+end
+
+-- For `ge` and insert-mode `b`: land on the lead byte of the
+-- last char of the previous line. char_start walks back from
+-- `#line` to skip multi-byte trail bytes, so on a CJK-only line
+-- the cursor sits on the lead byte of the last CJK char (not on
+-- a continuation byte). Empty previous line → col 0.
+---@param prev_line string
+---@return integer 1-indexed byte to land cursor on (col + 1)
+local function _end_bwd_wrap_col(prev_line)
+  if #prev_line == 0 then
+    return 1
   end
+  return char_start(prev_line, #prev_line)
 end
 
 -- Wrap-aware cursor mover used by all four directions. `direction` is
@@ -195,9 +234,9 @@ local function cursor_move(method, direction)
         end
       elseif is_bwd and c <= 1 and col0 == 0 then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local nr, _, be = _find_wrap_backward(lines, r - 1)
+        local nr, bs, be = _find_wrap_backward(lines, r - 1)
         if nr then
-          r, c = nr, be
+          r, c = nr, _bwd_wrap_col(lines[nr] or '', bs, be)
           found = true
         else
           break
@@ -248,9 +287,9 @@ local function cursor_move(method, direction)
         end
       elseif is_end_bwd and c <= 1 and col0 == 0 then
         local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-        local nr, _, be = _find_wrap_backward(lines, r - 1)
+        local nr, _, _ = _find_wrap_backward(lines, r - 1)
         if nr then
-          r, c = nr, be
+          r, c = nr, _end_bwd_wrap_col(lines[nr] or '')
         else
           break
         end
@@ -411,9 +450,9 @@ local function run_op(direction, op)
       end
     elseif direction == 'backward' and c <= 1 and col0 == 0 then
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-      local nr, bs = _find_wrap_backward(lines, r - 1)
+      local nr, bs, be = _find_wrap_backward(lines, r - 1)
       if nr then
-        r, c = nr, bs
+        r, c = nr, _bwd_wrap_col(lines[nr] or '', bs, be)
       else
         break
       end
@@ -856,6 +895,9 @@ local function insert_move(method, direction)
       local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
       local nr, _, be = _find_wrap_backward(lines, row - 1)
       if nr then
+        -- Insert-mode `<m-b>` puts the cursor past the last word's
+        -- last byte (one past `be`), so inserted text goes after
+        -- the last word.
         row, target = nr, be + 1
       else
         return
