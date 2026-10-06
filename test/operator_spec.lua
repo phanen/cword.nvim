@@ -259,6 +259,37 @@ describe('operator-pending mode', function()
     eq(' def', result)
   end)
 
+  it('cw on 1 of 1 && k changes only 1 (&& is a separate word)', function()
+    -- Stock vim: cw on '1' of '1 && k' deletes only '1', leaving
+    -- ' && k'. && is a non-blank non-keyword WORD unit, not part of
+    -- the keyword word '1', so cw stays on the keyword word.
+    -- This matches stock vim; ce on the same position would
+    -- delete '1 &&' instead (matches ce on 'a' in 'abc def').
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '1 && k' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('cw')
+    eq(' && k', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('ce on 1 of 1 && k deletes 1 && (end of next word)', function()
+    -- Stock vim: ce on '1' of '1 && k' deletes '1 &&' (current
+    -- position through end of the next word '&&'), leaving ' k'.
+    -- Matches stock vim.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '1 && k' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('ce')
+    eq(' k', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
+  it('dw on 1 of 1 && k deletes 1 and trailing space', function()
+    -- Stock vim: dw on '1' of '1 && k' deletes '1 ' (word + one
+    -- trailing space), leaving '&& k'.
+    helpers.api.nvim_buf_set_lines(0, 0, -1, false, { '1 && k' })
+    helpers.api.nvim_win_set_cursor(0, { 1, 0 })
+    helpers.feed('dw')
+    eq('&& k', helpers.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+  end)
+
   it('cw on leading whitespace deletes whitespace and word', function()
     -- nvim --clean: cw on leading whitespace '   abc' from col 0
     -- deletes the leading whitespace + the next word, leaving

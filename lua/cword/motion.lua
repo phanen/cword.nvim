@@ -133,6 +133,28 @@ function M.backward(cut, line, cursor)
   return (prev or { byte_start = 1 }).byte_start
 end
 
+-- `change-word` target: byte_end of the word under or after the
+-- cursor. Cursor on a non-word non-ws byte (e.g. '{') targets
+-- that token so `cw` deletes only that token. Cursor on leading
+-- whitespace targets the word that follows (so the leading ws
+-- + word are deleted together). Used by `cw` so it doesn't
+-- extend into the next word — `ce` (which uses end_forward)
+-- does that; stock vim differentiates the two.
+---@param cut fun(line: string): table[]
+---@param line string
+---@param cursor integer
+---@return integer 1-indexed byte_end of the targeted word
+function M.change_word(cut, line, cursor)
+  cursor = clamp(line, cursor)
+  local tokens = postprocess_tokens(cut(line))
+  for _, t in ipairs(tokens) do
+    if t.byte_end >= cursor and not is_whitespace(t) then
+      return t.byte_end
+    end
+  end
+  return #line
+end
+
 ---@param cut fun(line: string): table[]
 ---@param line string
 ---@param cursor integer

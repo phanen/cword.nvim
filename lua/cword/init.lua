@@ -398,13 +398,15 @@ local function run_op(direction, op)
     end_backward = M.motion.end_backward,
   })[direction]
   assert(method, 'unknown direction: ' .. tostring(direction))
-  -- `c` with `w` (forward) is `ce`: delete the current word
-  -- including its last char, but not trailing whitespace. Use
-  -- end_forward so the visual range covers the current word only.
+  -- `c` with `w` (forward) is `cw` — change the current word.
+  -- Stock vim keeps this distinct from `ce`: `cw` deletes only the
+  -- current word (plus leading ws when on leading ws), `ce`
+  -- extends through the end of the next word. Use change_word so
+  -- `cw` lands on byte_end of the word the cursor is on or after.
   local effective_method = method
   local effective_direction = direction
   if op == 'c' and direction == 'forward' then
-    effective_method = M.motion.end_forward
+    effective_method = M.motion.change_word
     effective_direction = 'end_forward'
   end
   local r, c = row, col0 + 1
@@ -587,16 +589,18 @@ local function run_op(direction, op)
   if s_row > e_row or (s_row == e_row and s_col > e_col) then
     s_row, s_col, e_row, e_col = e_row, e_col, s_row, s_col
   end
-  -- Empty visual range under `c`: just enter insert mode
-  -- (matching nvim's `cw` on an empty line or `ce` at a word's end).
-  if op == 'c' and s_row == e_row and s_col == e_col then
+  -- Truly-empty visual range under `c` (cursor past EOL, e.g. `cw`
+  -- on an empty line or `ce` at a word's last byte): just enter
+  -- insert mode without deleting anything. The check guards
+  -- against [0, 0] on a non-empty line, which nvim still treats
+  -- as a 1-byte delete (byte 1).
+  if op == 'c' and s_row == e_row and s_col == e_col and s_col >= #orig_line then
     vim.api.nvim_win_set_cursor(0, { s_row + 1, s_col })
     vim.schedule(function()
       vim.cmd('startinsert')
     end)
     return
   end
-  -- `dw` on an empty line: nvim --clean joins with the next line.
   -- Visual mode doesn't work here because the cursor at col 0 of
   -- the next line gets clamped; use :delete _ via normal! instead.
   if direction == 'forward' and #orig_line == 0 and op == 'd' then
