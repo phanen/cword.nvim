@@ -12,6 +12,11 @@ local has_vs16 = text.has_vs16
 local whitespace_between = text.whitespace_between
 local next_non_whitespace_end = text.next_non_whitespace_end
 local is_keyword = require('cword.util.iskeyword').is_keyword
+local setcmdline = function(...)
+  vim.fn.setcmdline(...)
+  vim.F.nil_wrap(vim.api.nvim_exec_autocmds)('CursorMovedC', {})
+  vim.api.nvim_feedkeys(vim.keycode('<c-r><c-r><c-r>'), 'nt', false)
+end
 
 local _cut = M.Segmenter.cut
 
@@ -1029,7 +1034,7 @@ M.cmdline_forward = function()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.forward(_cut, line, pos)
   if target > pos then
-    vim.fn.setcmdline(line, target)
+    setcmdline(line, target)
   end
 end
 
@@ -1038,7 +1043,7 @@ M.cmdline_backward = function()
   local pos = vim.fn.getcmdpos()
   local target = M.motion.backward(_cut, line, pos)
   if target < pos then
-    vim.fn.setcmdline(line, target)
+    setcmdline(line, target)
   end
 end
 
@@ -1071,7 +1076,7 @@ M.cmdline_delete_word = function()
 
   -- Mirror insert_delete_word's yank into the small-delete register.
   vim.fn.setreg('-', line:sub(target + 1, pos - 1))
-  vim.fn.setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
+  setcmdline(line:sub(1, target) .. line:sub(pos), target + 1)
 end
 
 -- CJK-aware cword lookup.
